@@ -1,0 +1,258 @@
+name: Release
+
+# Pushing a tag such as v1.2.3 does three things:
+#
+#   1. verifies the tree (gofmt, go vet, go test -race, frontend type-check)
+#   2. publishes a GitHub release with cross-compiled binaries and checksums
+#   3. builds and pushes the container image, tagged 1.2.3 / 1.2 / latest
+#
+# Image targets:
+#   ghcr.io/<owner>/nsst   always, using the built-in GITHUB_TOKEN (no setup)
+#   <DOCKERHUB_USERNAME>/nsst   only when the Docker Hub secrets are configured
+#
+# Required secrets for Docker Hub (Settings -> Secrets and variables -> Actions):
+#   DOCKERHUB_USERNAME   e.g. hyumerin
+#   DOCKERHUB_TOKEN      a Docker Hub access token with Read & Write
+#
+# Without those two secrets the release still succeeds; only the Docker Hub push
+# is skipped, and GHCR receives the image instead.
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Manual dry run from the Actions tab: builds everything but publishes nothing.
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the GitHub release
+  packages: write # push to GHCR
+
+env:
+  GO_MODULE: github.com/nsst/streamtest
+  NODE_VERSION: "22"
+
+jobs:
+  # --------------------------------------------------------------- quality gate
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the console
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Go tests (race detector)
+        run: go test -race -count=1 ./...
+
+  # ------------------------------------------------------------- github release
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # --generate-notes needs the history back to the previous tag.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Resolve the version
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # The released binaries embed the console, so it has to be built from the
+      # tagged sources rather than trusting whatever is committed in dist/.
+      - name: Build the console
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Cross-compile the server
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            goos="${target%%/*}"
+            goarch="${target##*/}"
+            ext=""
+            if [ "$goos" = "windows" ]; then ext=".exe"; fi
+            out="dist/nsst_${VERSION}_${goos}_${goarch}${ext}"
+            echo "building ${out}"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
+              -trimpath \
+              -ldflags "-s -w -X ${GO_MODULE}/internal/config.Version=${VERSION}" \
+              -o "$out" \
+              ./cmd/server
+          done
+          cd dist
+          sha256sum ./* > checksums.txt
+          cat checksums.txt
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            # Re-running a failed workflow should not fail on the existing release.
+            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes \
+              --verify-tag \
+              dist/*
+          fi
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          {
+            echo "### Released ${GITHUB_REF_NAME}"
+            echo
+            echo "Binaries built for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64 and windows/amd64,"
+            echo "each stamped with version \`${VERSION}\`."
+            echo
+            echo '```'
+            cat dist/checksums.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------ container
+  container:
+    name: Publish container image
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the version
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Docker Hub is optional: without the two secrets the image is published to
+      # GHCR only, so a tag push always produces a usable image.
+      - name: Collect image names
+        id: images
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+          list="ghcr.io/${GITHUB_REPOSITORY}"
+          has_dockerhub=false
+          if [ -n "${DOCKERHUB_USERNAME}" ]; then
+            list="${list}"$'\n'"${DOCKERHUB_USERNAME}/nsst"
+            has_dockerhub=true
+          fi
+          {
+            echo "list<<IMAGES_EOF"
+            printf '%s\n' "$list"
+            echo "IMAGES_EOF"
+            echo "has_dockerhub=${has_dockerhub}"
+          } >> "$GITHUB_OUTPUT"
+          echo "publishing to:"
+          printf '%s\n' "$list"
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: steps.images.outputs.has_dockerhub == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.images.outputs.list }}
+          # `latest` is added explicitly below so that a pre-release tag such as
+          # v1.2.3-rc1 never moves it.
+          flavor: |
+            latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+            type=ref,event=tag
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          # A manual run builds the image but does not publish it.
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.value }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          IMAGES: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo "### Container image ${VERSION}"
+            echo
+            echo '```'
+            echo "${IMAGES}"
+            echo '```'
+            echo "Platforms: linux/amd64, linux/arm64"
+          } >> "$GITHUB_STEP_SUMMARY"
