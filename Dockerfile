@@ -12,10 +12,19 @@
 #
 # The console is compiled into the binary with go:embed, so the final image
 # serves the UI, the REST API and all three stream endpoints from one process.
+#
+# Multi-architecture builds:
+#   The web and build stages are pinned to $BUILDPLATFORM rather than the
+#   target platform. Both produce platform-independent output (a JS bundle and
+#   a CGO-free static binary), so they run once, natively, and the Go toolchain
+#   cross-compiles to $TARGETARCH. Building linux/amd64 and linux/arm64
+#   therefore does not run npm or the Go compiler under QEMU emulation at all.
+#   The runtime stage is left on the target platform, so the published manifest
+#   is still a genuine multi-arch image.
 # ---------------------------------------------------------------------------
 
 # --- Stage 1: build the web console ----------------------------------------
-FROM node:22-alpine AS web
+FROM --platform=${BUILDPLATFORM} node:22-alpine AS web
 
 WORKDIR /src/web
 
@@ -32,27 +41,37 @@ RUN npm run build
 
 
 # --- Stage 2: compile the server -------------------------------------------
-FROM golang:1.24-alpine AS build
+FROM --platform=${BUILDPLATFORM} golang:1.24-alpine AS build
 
 WORKDIR /src
 
-# Resolve modules first: this layer is cached until go.mod/go.sum change.
+# Resolve modules first: this layer is cached until go.mod/go.sum change. The
+# module and build caches are BuildKit cache mounts, so they persist across
+# builds instead of living in a layer that a source edit throws away.
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
 
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY pkg/ ./pkg/
 
-# The checked-in placeholder console is replaced by the real bundle. The build
-# context excludes internal/webui/dist, so this is the only source of the UI.
+# The checked-in bundle is replaced by the one just built from web/ sources. The
+# build context excludes internal/webui/dist, so this is the only source of the UI.
 RUN rm -rf ./internal/webui/dist
 COPY --from=web /src/internal/webui/dist ./internal/webui/dist
 
+# Supplied by BuildKit for each platform in the build.
+ARG TARGETOS
+ARG TARGETARCH
 ARG VERSION=1.0.0
 
-# CGO_ENABLED=0 produces a static binary that runs on a bare Alpine base.
-RUN CGO_ENABLED=0 GOOS=linux go build \
+# CGO_ENABLED=0 produces a static binary that runs on a bare Alpine base, and is
+# what makes the cross-compilation above possible.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
         -trimpath \
         -ldflags "-s -w -X github.com/nsst/streamtest/internal/config.Version=${VERSION}" \
         -o /out/streamtest \

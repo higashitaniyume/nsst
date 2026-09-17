@@ -82,6 +82,14 @@ docker compose down
 
 镜像约 21 MB，进程以非 root（uid 10001）运行，自带 `HEALTHCHECK`。
 
+构建 amd64 + arm64 双架构镜像：
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 -t hyumerin/nsst --push .
+```
+
+> **构建为什么快**：`web` 和 `build` 两个阶段固定在 `$BUILDPLATFORM` 上执行。前端产物和 Go 二进制都与宿主架构无关（`CGO_ENABLED=0`），所以它们**只在原生架构上跑一次**，再由 Go 交叉编译出目标架构——构建 arm64 镜像时 `npm` 和 Go 编译器都不会跑在 QEMU 模拟里。Go 的编译缓存和模块缓存用 BuildKit cache mount 挂载，改了代码也只重新编译受影响的包，而不是整个项目。
+
 ### 方式二：本地开发
 
 需要 Go 1.24+ 和 Node 18+。
