@@ -1,0 +1,24 @@
+# Normalise line endings so a Windows checkout behaves like a Linux one.
+#
+# Without this, Git's core.autocrlf converts LF to CRLF on checkout, which makes
+# `gofmt -l .` report every Go file as unformatted and can make `make` unhappy.
+# Everything is stored and checked out with LF; only genuinely Windows-specific
+# files keep CRLF.
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets are never touched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.gz binary
+*.zip binary

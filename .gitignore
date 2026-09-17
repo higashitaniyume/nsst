@@ -1,0 +1,29 @@
+# --- build output ---
+/bin/
+*.exe
+*.test
+*.out
+coverage/
+
+# --- generated frontend bundle ---
+# internal/webui/dist is COMMITTED on purpose. The package uses
+# `//go:embed all:dist`, which fails to compile when the directory is missing,
+# so a Go-only checkout would break `go build ./...` and `go test ./...`.
+# `npm run build` regenerates these files; the Docker build ignores the
+# committed copy entirely and rebuilds the console from web/ sources.
+/web/node_modules/
+/web/dist/
+npm-debug.log*
+pnpm-debug.log*
+
+# --- editors and OS noise ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- local overrides ---
+.env
+.env.*
+docker-compose.override.yml

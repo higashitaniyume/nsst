@@ -1,0 +1,35 @@
+# Keep the build context small and deterministic. Everything excluded here is
+# either generated inside the image or irrelevant to the build.
+
+.git
+.gitignore
+.github
+
+# Build output: the console is rebuilt inside the image from source.
+bin/
+internal/webui/dist/
+
+# Host-installed frontend dependencies must never leak into the image; the
+# web stage runs `npm ci` against the lockfile instead.
+web/node_modules/
+web/dist/
+npm-debug.log*
+
+# Local tooling and editor state.
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Documentation and local overrides.
+*.md
+!README.md
+docker-compose.override.yml
+.env
+.env.*
+
+# Test and coverage artefacts.
+*.out
+*.test
+coverage/
