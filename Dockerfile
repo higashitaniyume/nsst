@@ -103,7 +103,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=3s --retries=3 \
     CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/api/health" || exit 1
 
 # The server handles SIGTERM by draining live streams before it exits; Docker
-# must not kill it early, hence the matching stop grace period in compose.yaml.
+# must not kill it early, hence the matching stop grace period in docker-compose.yml.
 STOPSIGNAL SIGTERM
 
 ENTRYPOINT ["/usr/local/bin/streamtest"]

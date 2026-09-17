@@ -1,31 +1,48 @@
 # Docker Compose definition for the Network Stream Stability Tester.
 #
-#   docker compose up --build          # build and run
-#   docker compose up -d --build       # detached
-#   docker compose down                # stop
+#   docker compose up -d              # run the published image (pulled if absent)
+#   docker compose up -d --build      # build from source instead, then run
+#   docker compose logs -f            # follow the server logs
+#   docker compose down               # stop and remove
 #
-# Every value below is optional: the server falls back to the defaults compiled
-# into internal/config, and the commented values document what those are.
+# The console, the REST API and all three stream endpoints are served from
+#   http://localhost:55537
+#
+# Change the host port without editing this file:
+#   NSST_PORT=60000 docker compose up -d
 
 services:
   streamtest:
+    # Both build: and image: are set on purpose. Compose tags a built image with
+    # the name below, so `up --build` and `up` agree on what "hyumerin/nsst:0.1.0"
+    # means locally. Without --build the published image is pulled when it is not
+    # already present, which keeps a plain deploy from recompiling the project.
+    image: hyumerin/nsst:0.1.0
+
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        VERSION: "1.0.0"
-    image: hyumerin/nsst:latest
+        # Stamped into the binary; /api/health reports it back.
+        VERSION: "0.1.0"
+
+    pull_policy: missing
+
     container_name: streamtest
 
     ports:
-      - "8080:8080"
+      # host:container -- the server always listens on 8080 inside the
+      # container, so only the left-hand side changes.
+      - "${NSST_PORT:-55537}:8080"
 
     environment:
       # Listen address. Keep HOST at 0.0.0.0 inside a container.
       HOST: "0.0.0.0"
       PORT: "8080"
 
-      # Parameter limits advertised by /api/config and enforced by the handlers.
+      # Parameter limits advertised by /api/config and enforced by the
+      # handlers. These are the defaults compiled into the binary; they are
+      # spelled out here so you can tune them without a rebuild.
       MAX_DURATION: "3600"            # longest accepted duration, seconds
       MAX_PAYLOAD_SIZE: "1048576"     # largest frame payload, bytes (1 MiB)
       MIN_INTERVAL: "10"              # fastest accepted pacing, milliseconds
@@ -49,14 +66,15 @@ services:
     stop_grace_period: 20s
 
     healthcheck:
+      # Probed inside the container, so this always uses the container port.
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/health"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 5s
 
-    # Long-lived streams need file descriptors for every concurrent connection,
-    # and the process itself is tiny.
+    # Long-lived streams need a file descriptor per concurrent connection, and
+    # the process itself is tiny.
     ulimits:
       nofile:
         soft: 65536

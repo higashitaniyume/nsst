@@ -71,13 +71,19 @@ docker run -d --name streamtest -p 8080:8080 hyumerin/nsst
 # 打开 http://localhost:8080
 ```
 
-或者用 Compose：
+或者用 Compose（仓库根目录的 `docker-compose.yml`，服务起在 **http://localhost:55537**）：
 
 ```bash
-docker compose up --build      # 前台，Ctrl+C 优雅停止
-docker compose up -d --build   # 后台
+docker compose up -d             # 拉取已发布的镜像并运行（不重新构建）
+docker compose up -d --build     # 从源码构建后运行
 docker compose logs -f
 docker compose down
+```
+
+`docker-compose.yml` 里同时写了 `build:` 和 `image:`，所以 `up -d` 与 `up -d --build` 产出的镜像同名，两条路径不会互相污染。改端口不用编辑文件：
+
+```bash
+NSST_PORT=60000 docker compose up -d
 ```
 
 镜像约 21 MB，进程以非 root（uid 10001）运行，自带 `HEALTHCHECK`。
@@ -474,7 +480,7 @@ NSST/
 │   ├── tsconfig.json
 │   └── vite.config.ts
 ├── Dockerfile                    # 三阶段构建
-├── compose.yaml
+├── docker-compose.yml
 ├── Makefile
 ├── go.mod / go.sum
 └── LICENSE
