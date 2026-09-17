@@ -1,5 +1,8 @@
 # NSST — Network Stream Stability Tester
 
+[![CI](https://github.com/higashitaniyume/nsst/actions/workflows/ci.yml/badge.svg)](https://github.com/higashitaniyume/nsst/actions/workflows/ci.yml)
+[![Release](https://github.com/higashitaniyume/nsst/actions/workflows/release.yml/badge.svg)](https://github.com/higashitaniyume/nsst/actions/workflows/release.yml)
+
 一个用来测量**长连接流式接口稳定性**的测试工具。它同时用三种协议连接同一台服务端，把每一帧的到达情况记录下来，用六张表和三张图告诉你：这条流到底稳不稳、什么时候卡了、卡了多久。
 
 三种协议共用同一套帧格式，所以横向对比是有意义的：
@@ -26,6 +29,7 @@
 - [指标定义](#指标定义)
 - [项目结构](#项目结构)
 - [测试](#测试)
+- [发布流程](#发布流程)
 - [设计取舍](#设计取舍)
 - [常见问题](#常见问题)
 - [License](#license)
@@ -535,6 +539,56 @@ make smoke         # 对已运行的服务做三协议冒烟测试
 | HTTP Streaming | 50 / 50 | 100.0 ms | 102 ms | 0 |
 | SSE | 50 / 50 | 100.0 ms | 108 ms | 0 |
 | WebSocket | 50 / 50 | 100.0 ms | 110 ms | 0 |
+
+---
+
+## 发布流程
+
+打一个 `v*` 标签，剩下的事情由 `.github/workflows/release.yml` 自动完成。
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+### 这个标签会触发什么
+
+三个任务：
+
+1. **Verify** — `gofmt` 检查、`go vet`、`go test -race`、前端类型检查。任何一项失败都会挡住后面的发布。
+2. **Publish release** — 从**打标签时的源码**重新构建前端（不信任仓库里已提交的产物），交叉编译五个平台，生成 `checksums.txt`，然后创建 GitHub Release（自动生成更新说明）：
+   - `nsst_1.0.0_linux_amd64` / `_linux_arm64`
+   - `nsst_1.0.0_darwin_amd64` / `_darwin_arm64`
+   - `nsst_1.0.0_windows_amd64.exe`
+   - 每个二进制都通过 `-ldflags -X` 把版本号编进去，`/api/health` 会如实返回
+3. **Publish container image** — 构建 `linux/amd64` + `linux/arm64` 双架构镜像并推送，标签为 `1.0.0`、`1.0`、`latest` 和原始标签名 `v1.0.0`。预发布标签（如 `v1.2.0-rc1`）**不会**移动 `latest`。
+
+### 镜像推到哪里
+
+| 目标 | 需要配置 | 说明 |
+| --- | --- | --- |
+| `ghcr.io/higashitaniyume/nsst` | 无 | 用内置的 `GITHUB_TOKEN`，开箱即用 |
+| `hyumerin/nsst`（Docker Hub） | 两个 secret | 未配置时自动跳过，不影响 release |
+
+要启用 Docker Hub，在仓库的 **Settings → Secrets and variables → Actions** 里加：
+
+| Secret | 值 |
+| --- | --- |
+| `DOCKERHUB_USERNAME` | `hyumerin` |
+| `DOCKERHUB_TOKEN` | 在 Docker Hub 生成的 Access Token，权限选 **Read & Write**（不要用登录密码） |
+
+配好之后，同样的标签会自动多推一份到 Docker Hub，`docker pull hyumerin/nsst` 就能用了。
+
+> 第一次推送到 GHCR 后，包默认是私有的。如果要公开，去 GitHub 的 **Packages** 页面把 `nsst` 的可见性改成 public。
+
+### 演练
+
+不想真的发布时，在 **Actions → Release → Run workflow** 手动触发一次。它会完整跑一遍校验和双架构镜像构建，但**不推送任何东西**、也**不创建 release**。
+
+### 常见情况
+
+- **流水线失败后重跑**：release 任务是幂等的，重跑会用 `--clobber` 覆盖已存在的附件，不会因为 release 已存在而失败。
+- **想改 tag 重发**：先删掉 release 和 tag（`gh release delete v1.0.0 --yes --cleanup-tag`），再重新打。注意已经推到镜像仓库的同名标签不会被这个流程删除。
 
 ---
 
