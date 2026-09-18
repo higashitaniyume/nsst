@@ -26,7 +26,7 @@ const Name = "StreamTest"
 //
 // Release builds always overwrite it; the value below is what a plain
 // `go build` reports, and it tracks the most recent release.
-var Version = "0.2.0"
+var Version = "0.2.1"
 
 // Config is the fully resolved server configuration.
 type Config struct {
