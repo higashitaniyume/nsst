@@ -71,7 +71,7 @@ docker run -d --name streamtest -p 8080:8080 hyumerin/nsst
 # 打开 http://localhost:8080
 ```
 
-或者用 Compose（仓库根目录的 `docker-compose.yml`，服务起在 **http://localhost:55537**）：
+或者用 Compose（仓库根目录的 `docker-compose.yml`，服务起在 http://localhost:55537 ）：
 
 ```bash
 docker compose up -d             # 拉取已发布的镜像并运行（不重新构建）
