@@ -44,67 +44,8 @@ const en: Dict = {
   'proto.sse': 'Server-Sent Events',
   'proto.websocket': 'WebSocket',
 
-  // --- view mode -----------------------------------------------------------
-  'mode.toPro': 'Pro view',
-  'mode.toSimple': 'Simple view',
-  'mode.toProTitle': 'Show the full metrics, the charts and the event log',
-  'mode.toSimpleTitle': 'Back to the plain-language summary',
-
-  // --- plain-language view -------------------------------------------------
-  // Written for someone who has never heard of these protocols. No jargon, no
-  // acronyms, no units a non-engineer would have to look up.
-  'simple.summaryTitle': 'In short',
-  'simple.summaryHint':
-    'The three cards below are three common ways of sending data to a page live. All of them are tested at the same time.',
-  'simple.summaryAll': 'All three held up: data kept arriving on time and nothing stalled.',
-  'simple.summarySome': '{protocols} stalled at some point. The others were fine.',
-  'simple.summaryWaiting': 'Nothing measured yet — give it a few seconds.',
-
-  'simple.name.http-stream': 'Plain streaming',
-  'simple.name.sse': 'Server push',
-  'simple.name.websocket': 'Two-way channel',
-
-  'simple.about.http-stream':
-    'The simplest way: the server keeps the line open and sends data piece by piece. This is what AI chat replies and live logs use.',
-  'simple.about.sse':
-    'The server pushes updates on its own and the page just listens. This is what notifications, stock tickers and progress bars use.',
-  'simple.about.websocket':
-    'A two-way channel where either side can send a message at any moment. This is what chat, shared editing and games use.',
-
-  'simple.status.idle': 'Not started',
-  'simple.status.connecting': 'Connecting…',
-  'simple.status.flowing': 'Smooth',
-  'simple.status.minor': 'Occasional hiccup',
-  'simple.status.laggy': 'Stalling a lot',
-  'simple.status.dead': 'No connection',
-  'simple.status.broke': 'Dropped',
-
-  'simple.row.frames': 'Messages received',
-  'simple.row.size': 'Total data',
-  'simple.row.pace': 'How often one arrives',
-  'simple.row.stalls': 'Times it stalled',
-  'simple.row.worst': 'Longest stall',
-  'simple.row.drops': 'Did it disconnect',
-
-  'simple.value.frames': '{count}',
-  'simple.value.pace': 'about every {interval}',
-  'simple.value.noStalls': 'never stalled',
-  'simple.value.stalls': '{count}',
-  'simple.value.noWorst': 'never stalled',
-  'simple.value.noDrops': 'no, it stayed up',
-  'simple.value.drops': 'yes, {count} time(s)',
-
-  'simple.verdict.flowing':
-    'This stream stayed smooth throughout: data arrived on schedule and you can rely on it.',
-  'simple.verdict.minor':
-    'Fine overall, with the occasional slowdown (longest {gap}). Usually not something a user would notice.',
-  'simple.verdict.laggy':
-    'It stalled {count} time(s), the longest for {gap}. Users would probably feel this one.',
-  'simple.verdict.noData': 'No data yet. It may still be connecting, or something is blocking it.',
-  'simple.verdict.error': 'The connection could not be established; the server may be unreachable.',
-  'simple.verdict.broke': 'The connection dropped partway through and never came back.',
-
-  'list.sep': ', ',
+  'overview.title': 'Frame interval, all three protocols',
+  'overview.metric': 'Metric',
 
   'table.traffic': 'Connection & traffic',
   'table.timing': 'Timing & gaps',
@@ -132,9 +73,10 @@ const en: Dict = {
   'value.bounded': '{actual} / {expected}',
 
   'chart.interval': 'Frame interval',
-  'chart.intervalHint': 'Time between consecutive frame arrivals, in milliseconds.',
+  'chart.intervalHint':
+    'Time between consecutive frame arrivals, in milliseconds. The last minute, scrolling.',
   'chart.throughput': 'Throughput',
-  'chart.throughputHint': 'Application bytes received per second.',
+  'chart.throughputHint': 'Application bytes received per second. The last minute, scrolling.',
   'chart.peaks': 'Interruption peaks',
   'chart.peaksHint': 'Every gap that exceeded the threshold, plotted at the moment it ended.',
 
@@ -247,64 +189,8 @@ const zh: Dict = {
   'proto.sse': 'SSE',
   'proto.websocket': 'WebSocket',
 
-  // --- 视图模式 -----------------------------------------------------------
-  'mode.toPro': '专业视图',
-  'mode.toSimple': '通俗视图',
-  'mode.toProTitle': '展开完整指标、图表和事件日志',
-  'mode.toSimpleTitle': '回到大白话总结',
-
-  // --- 通俗视图 -----------------------------------------------------------
-  // 写给完全不懂网络的人看：不出现协议缩写、不出现工程术语、单位只用日常说法。
-  'simple.summaryTitle': '一句话总结',
-  'simple.summaryHint':
-    '下面三张卡片，是网页实时接收数据的三种常见做法。它们正在被同时测试。',
-  'simple.summaryAll': '三种做法都很稳：数据一直按时到达，中间没有卡顿。',
-  'simple.summarySome': '{protocols} 中途卡过。其余的都正常。',
-  'simple.summaryWaiting': '还没有测到数据，再等几秒。',
-
-  'simple.name.http-stream': '普通流式传输',
-  'simple.name.sse': '服务器主动推送',
-  'simple.name.websocket': '双向通道',
-
-  'simple.about.http-stream':
-    '最朴素的做法：连接一直开着，服务器把数据一条一条发过来。AI 逐字回答、日志实时滚动用的就是它。',
-  'simple.about.sse':
-    '服务器自己往外推消息，网页只负责收。消息通知、股票行情、进度条用的是它。',
-  'simple.about.websocket':
-    '双向通道，两边随时都能给对方发消息。聊天、多人协作、游戏用的是它。',
-
-  'simple.status.idle': '还没开始',
-  'simple.status.connecting': '正在连接…',
-  'simple.status.flowing': '很流畅',
-  'simple.status.minor': '偶尔慢一下',
-  'simple.status.laggy': '经常卡顿',
-  'simple.status.dead': '连不上',
-  'simple.status.broke': '断开了',
-
-  'simple.row.frames': '收到了多少条',
-  'simple.row.size': '数据一共多大',
-  'simple.row.pace': '大概多久来一条',
-  'simple.row.stalls': '中途卡了几次',
-  'simple.row.worst': '最长卡了多久',
-  'simple.row.drops': '连接断过吗',
-
-  'simple.value.frames': '{count} 条',
-  'simple.value.pace': '平均 {interval}',
-  'simple.value.noStalls': '一次都没卡',
-  'simple.value.stalls': '{count} 次',
-  'simple.value.noWorst': '没有卡过',
-  'simple.value.noDrops': '没断过，一直连着',
-  'simple.value.drops': '断过 {count} 次',
-
-  'simple.verdict.flowing': '这条通道全程都很顺畅，数据按时到达，可以放心用。',
-  'simple.verdict.minor':
-    '整体没问题，只是偶尔慢了一下（最长 {gap}），一般用户感觉不到。',
-  'simple.verdict.laggy': '卡了 {count} 次，最长一次停了 {gap}，用户大概率能感觉到。',
-  'simple.verdict.noData': '还没收到数据。可能是还在连接，也可能是被什么挡住了。',
-  'simple.verdict.error': '没能连上，服务端可能不可用。',
-  'simple.verdict.broke': '连接中途断了，之后也没恢复。',
-
-  'list.sep': '、',
+  'overview.title': '三种协议帧间隔对比',
+  'overview.metric': '指标',
 
   'table.traffic': '连接与流量',
   'table.timing': '时延与间隔',
@@ -332,9 +218,9 @@ const zh: Dict = {
   'value.bounded': '{actual} / {expected}',
 
   'chart.interval': '帧间隔',
-  'chart.intervalHint': '相邻两帧的到达间隔，单位毫秒。',
+  'chart.intervalHint': '相邻两帧的到达间隔，单位毫秒。只显示最近 1 分钟，随时间滚动。',
   'chart.throughput': '吞吐',
-  'chart.throughputHint': '每秒接收到的应用层字节数。',
+  'chart.throughputHint': '每秒接收到的应用层字节数。只显示最近 1 分钟，随时间滚动。',
   'chart.peaks': '中断点',
   'chart.peaksHint': '每次超过阈值的间隙，按它结束的时刻打点。',
 

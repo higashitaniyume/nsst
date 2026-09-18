@@ -6,17 +6,11 @@ import { applyStatic, onLangChange, t, toggleLang } from './i18n.js';
 import { MetricsCollector } from './metrics.js';
 import { createSSETransport } from './sse.js';
 import type { CloseReason, Message, Transport, TransportCallbacks } from './transport.js';
-import type {
-  ConfigResponse,
-  ConnectionState,
-  MetricsSnapshot,
-  Protocol,
-  StreamParams,
-} from './types.js';
+import type { ConfigResponse, ConnectionState, Protocol, StreamParams } from './types.js';
 import { PROTOCOLS } from './types.js';
-import { EventLog, NumericChoiceGroup, requireElement, setClass, setText } from './ui.js';
-import { PROTOCOL_COLORS, ProtocolCard, simpleSummaryFor } from './views.js';
-import type { ViewMode } from './views.js';
+import { EventLog, NumericChoiceGroup, requireElement, setText } from './ui.js';
+import { OverviewTable, PROTOCOL_COLORS, ProtocolCard } from './views.js';
+import type { OverviewEntry } from './views.js';
 import { createWebSocketTransport } from './websocket.js';
 
 import 'uplot/dist/uPlot.min.css';
@@ -29,6 +23,14 @@ const RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECTS = 10;
 /** Grace period after the requested duration before the client stops waiting. */
 const CLOSE_LATE_MS = 2000;
+/**
+ * Seconds of history each chart keeps.
+ *
+ * A soak test runs for as long as the user leaves it, so plotting every point
+ * since the start would squeeze the interesting part — the last minute — into a
+ * few pixels. Charts show a trailing minute and drop everything older.
+ */
+const CHART_WINDOW_SECONDS = 60;
 
 interface Sample {
   intervalMs: number;
@@ -278,7 +280,7 @@ class Suite {
   private readonly peaksCharts = new Map<Protocol, MultiChart>();
 
   private readonly log: EventLog;
-  private readonly summary: HTMLElement;
+  private readonly overview: OverviewTable;
   private readonly onRunningChanged: (running: boolean) => void;
 
   private ticker: number | null = null;
@@ -287,17 +289,15 @@ class Suite {
   private expectedFrames = 0;
   private untilStopped = true;
   private running = false;
-  /** Latest snapshot per protocol, kept so a language switch can redraw the summary. */
-  private entries: { protocol: Protocol; snapshot: MetricsSnapshot }[] = [];
 
   constructor(options: {
     grid: HTMLElement;
-    summary: HTMLElement;
+    overview: HTMLElement;
     log: EventLog;
     onRunningChanged: (running: boolean) => void;
   }) {
     this.log = options.log;
-    this.summary = options.summary;
+    this.overview = new OverviewTable(options.overview);
     this.onRunningChanged = options.onRunningChanged;
 
     for (const protocol of PROTOCOLS) {
@@ -315,7 +315,8 @@ class Suite {
         new MultiChart(card.chartSlots.interval, {
           series: [{ label, stroke }],
           format: formatAxisMs,
-          height: 160,
+          windowSeconds: CHART_WINDOW_SECONDS,
+          height: 140,
         }),
       );
       this.throughputCharts.set(
@@ -323,7 +324,8 @@ class Suite {
         new MultiChart(card.chartSlots.throughput, {
           series: [{ label, stroke }],
           format: formatAxisRate,
-          height: 160,
+          windowSeconds: CHART_WINDOW_SECONDS,
+          height: 140,
         }),
       );
       this.peaksCharts.set(
@@ -331,7 +333,8 @@ class Suite {
         new MultiChart(card.chartSlots.peaks, {
           series: [{ label, stroke, asPoints: true }],
           format: formatAxisMs,
-          height: 140,
+          windowSeconds: CHART_WINDOW_SECONDS,
+          height: 120,
         }),
       );
     }
@@ -346,9 +349,9 @@ class Suite {
   }
 
   /**
-   * Remeasures every chart. The panels are laid out inside cards that CSS hides
-   * in one of the two views, so a chart built while hidden needs to be told when
-   * its container finally has a width.
+   * Remeasures every chart. The panels live inside cards whose width changes
+   * with the viewport, and a chart built inside a collapsed `<details>` has no
+   * width at all, so it has to be told when its container finally has one.
    */
   resizeCharts(): void {
     for (const chart of this.allCharts()) chart.resize();
@@ -358,7 +361,7 @@ class Suite {
     return this.running;
   }
 
-  /** Re-applies translated labels on the cards, the charts and the summary. */
+  /** Re-applies translated labels on the cards and the charts. */
   renderLabels(): void {
     for (const [protocol, card] of this.cards) {
       card.renderLabels();
@@ -367,18 +370,18 @@ class Suite {
       this.throughputCharts.get(protocol)?.setSeriesLabels([label]);
       this.peaksCharts.get(protocol)?.setSeriesLabels([label]);
     }
-    this.renderSummary();
+    this.overview.renderLabels();
   }
 
   /**
-   * Repaints every card and the plain-language summary from live snapshots.
+   * Repaints the overview table and every card from live snapshots.
    *
    * This is deliberately separate from {@link tick}: the charts only get a point
-   * while a stream is producing samples, but the cards must still be repainted
+   * while a stream is producing samples, but the tables must still be repainted
    * once the last stream settles so the terminal state reaches the screen.
    */
   private paint(now: number): void {
-    const entries: { protocol: Protocol; snapshot: MetricsSnapshot }[] = [];
+    const entries: OverviewEntry[] = [];
     for (const protocol of PROTOCOLS) {
       const run = this.runs.get(protocol);
       if (!run) continue;
@@ -386,14 +389,7 @@ class Suite {
       entries.push({ protocol, snapshot });
       run.card.update(snapshot, this.params, this.expectedFrames, this.untilStopped, this.running);
     }
-    this.entries = entries;
-    this.renderSummary();
-  }
-
-  private renderSummary(): void {
-    const summary = simpleSummaryFor(this.entries);
-    setText(this.summary, summary.text);
-    setClass(this.summary, 'simple-summary', `summary-${summary.level}`);
+    this.overview.update(entries, this.params);
   }
 
   /**
@@ -416,6 +412,7 @@ class Suite {
 
     for (const chart of this.allCharts()) chart.clear();
     for (const [, card] of this.cards) card.reset();
+    this.overview.reset();
 
     this.runs.clear();
     this.startedAt = performance.now();
@@ -491,8 +488,8 @@ class Suite {
       }
     }
 
-    // The cards and the summary are painted from the snapshots rather than from
-    // the chart samples, so a settled stream still shows its final verdict.
+    // The cards are painted from the snapshots rather than from the chart
+    // samples, so a settled stream still shows its final verdict.
     this.paint(now);
   }
 }
@@ -568,7 +565,7 @@ async function boot(): Promise<void> {
 
   const suite = new Suite({
     grid: requireElement('protocol-grid'),
-    summary: requireElement('simple-summary'),
+    overview: requireElement('overview-table'),
     log,
     onRunningChanged: (running) => {
       startButton.disabled = running;
@@ -628,47 +625,7 @@ async function boot(): Promise<void> {
     setText(runNote, t(suite.isRunning ? 'run.noteAuto' : 'run.noteStopped'));
     cfgNotice.textContent = suite.isRunning ? t('cfg.locked') : t('cfg.ready');
     renderLimits();
-    applyMode();
   });
-
-  // --- view mode ----------------------------------------------------------
-  // Plain language is the default: someone who opens this page to find out
-  // whether their connection is stable should not have to read a protocol spec
-  // first. The pro view keeps every raw reading, the charts and the event log.
-  const MODE_KEY = 'nsst.mode';
-  const modeButton = requireElement<HTMLButtonElement>('mode-toggle');
-
-  let mode: ViewMode = 'simple';
-  try {
-    const saved = window.localStorage.getItem(MODE_KEY);
-    if (saved === 'simple' || saved === 'pro') mode = saved;
-  } catch {
-    // Private browsing or a storage-blocking extension: the default is fine.
-  }
-
-  function applyMode(): void {
-    document.body.classList.toggle('mode-simple', mode === 'simple');
-    document.body.classList.toggle('mode-pro', mode === 'pro');
-    // The button switches to the other view, so its label names the target.
-    setText(modeButton, t(mode === 'simple' ? 'mode.toPro' : 'mode.toSimple'));
-    modeButton.title = t(mode === 'simple' ? 'mode.toProTitle' : 'mode.toSimpleTitle');
-
-    // uPlot measures its container, and CSS hides one of the two presentations.
-    // Remeasuring on every switch keeps the charts from keeping a stale width.
-    window.requestAnimationFrame(() => suite.resizeCharts());
-  }
-
-  modeButton.addEventListener('click', () => {
-    mode = mode === 'simple' ? 'pro' : 'simple';
-    try {
-      window.localStorage.setItem(MODE_KEY, mode);
-    } catch {
-      // Not fatal: the choice simply will not be remembered.
-    }
-    applyMode();
-  });
-
-  applyMode();
 
   // --- start / stop -------------------------------------------------------
   function collectProtocols(): Protocol[] {

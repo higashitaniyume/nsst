@@ -18,10 +18,15 @@ export interface MultiChartOptions {
   height?: number;
   /** Draws a dashed guide line at this y value. */
   threshold?: number;
+  /**
+   * Seconds of history to keep. Older points are dropped as the run advances, so
+   * a chart always shows the most recent slice rather than the whole run.
+   */
+  windowSeconds?: number;
 }
 
-/** Upper bound on retained points; older points are decimated, never dropped. */
-const MAX_POINTS = 3000;
+/** Default trailing window: a chart shows roughly the last minute. */
+const DEFAULT_WINDOW_SECONDS = 60;
 
 const AXIS_FONT = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
 const GRID = '#1d2634';
@@ -30,13 +35,10 @@ const AXIS = '#7d8fa6';
 /**
  * A live uPlot chart carrying one series per protocol.
  *
- * All three series share the x axis (elapsed seconds since the suite started),
- * so pushes are aligned by construction: a protocol that is not running pushes
- * `null` and leaves a gap instead of shifting the series order.
- *
- * Once the point count exceeds {@link MAX_POINTS} every second point is
- * discarded, so a long run keeps its full history at progressively coarser
- * resolution instead of losing its start.
+ * Points are plotted against elapsed seconds since the suite started. Only a
+ * trailing window is retained: once a run passes {@link DEFAULT_WINDOW_SECONDS}
+ * the oldest points are dropped, so a long test keeps showing the recent minute
+ * at full resolution instead of squeezing hours into a few pixels.
  */
 export class MultiChart {
   private readonly plot: uPlot;
@@ -44,12 +46,14 @@ export class MultiChart {
   private readonly root: HTMLElement;
   private readonly observer: ResizeObserver;
   private readonly height: number;
+  private readonly windowSeconds: number;
   private xs: number[] = [];
   private ys: (number | null)[][];
 
   constructor(root: HTMLElement, options: MultiChartOptions) {
     this.root = root;
     this.height = options.height ?? 200;
+    this.windowSeconds = options.windowSeconds ?? DEFAULT_WINDOW_SECONDS;
     this.seriesCount = options.series.length;
     this.ys = options.series.map(() => []);
 
@@ -151,7 +155,7 @@ export class MultiChart {
       const value = values[i];
       this.ys[i]!.push(value === null || value === undefined || !Number.isFinite(value) ? null : value);
     }
-    if (this.xs.length > MAX_POINTS) this.decimate();
+    this.trim(x);
     this.plot.setData(this.data());
   }
 
@@ -179,19 +183,17 @@ export class MultiChart {
     return [this.xs, ...this.ys] as unknown as uPlot.AlignedData;
   }
 
-  /** Halves every series in place, keeping the first and last points aligned. */
-  private decimate(): void {
-    const last = this.xs.length - 1;
-    const xs: number[] = [];
-    for (let i = 0; i < this.xs.length; i += 2) xs.push(this.xs[i]!);
-    if (last % 2 !== 0) xs.push(this.xs[last]!);
+  /**
+   * Drops the points that have fallen out of the trailing window. Every series is
+   * trimmed by the same count, so they all stay aligned with the x axis.
+   */
+  private trim(latest: number): void {
+    const cutoff = latest - this.windowSeconds;
+    let drop = 0;
+    while (drop < this.xs.length && this.xs[drop]! < cutoff) drop += 1;
+    if (drop === 0) return;
 
-    this.ys = this.ys.map((series) => {
-      const out: (number | null)[] = [];
-      for (let i = 0; i < series.length; i += 2) out.push(series[i]!);
-      if (last % 2 !== 0) out.push(series[last]!);
-      return out;
-    });
-    this.xs = xs;
+    this.xs.splice(0, drop);
+    for (const series of this.ys) series.splice(0, drop);
   }
 }

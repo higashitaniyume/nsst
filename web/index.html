@@ -12,7 +12,7 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
-  <body class="mode-simple">
+  <body>
     <div class="app">
       <header class="topbar">
         <div class="brand">
@@ -27,12 +27,6 @@
           <button
             type="button"
             class="button ghost"
-            id="mode-toggle"
-            data-i18n-title="mode.toProTitle"
-          ></button>
-          <button
-            type="button"
-            class="button ghost"
             id="lang-toggle"
             data-i18n="lang.switch"
             data-i18n-title="lang.switchTitle"
@@ -41,6 +35,14 @@
       </header>
 
       <main class="layout">
+        <!-- All three protocols' frame-interval readings in one table, so a
+             difference between them is visible without scrolling. Columns are
+             built by views.ts. -->
+        <section class="panel overview">
+          <h2 class="section-title" data-i18n="overview.title"></h2>
+          <div id="overview-table"></div>
+        </section>
+
         <!-- Run state and the one control that always applies. -->
         <section class="panel runbar">
           <div class="runbar-text">
@@ -48,13 +50,6 @@
             <span class="run-note" id="run-note"></span>
           </div>
           <button type="button" class="button danger" id="stop-button" data-i18n="run.stop" disabled></button>
-        </section>
-
-        <!-- Plain-language mode: one sentence covering all three protocols. -->
-        <section class="panel only-simple" id="simple-summary-panel">
-          <h2 class="section-title" data-i18n="simple.summaryTitle"></h2>
-          <p class="simple-summary" id="simple-summary"></p>
-          <p class="hint" data-i18n="simple.summaryHint"></p>
         </section>
 
         <!-- One card per protocol, each with its own tables and charts, generated
@@ -141,7 +136,7 @@
           <button type="button" class="button primary" id="start-button" data-i18n="cfg.start"></button>
         </section>
 
-        <section class="panel only-pro">
+        <section class="panel">
           <div class="panel-head">
             <h2 class="section-title" data-i18n="log.title"></h2>
             <button type="button" class="button ghost small" id="log-clear" data-i18n="log.clear"></button>
@@ -149,7 +144,7 @@
           <ul class="log-list" id="log-list"></ul>
         </section>
 
-        <section class="panel about only-pro">
+        <section class="panel about">
           <h2 class="section-title" data-i18n="about.title"></h2>
           <p data-i18n="about.gap"></p>
           <p data-i18n="about.threshold"></p>

@@ -1,10 +1,8 @@
 import { formatBytes, formatClock, formatMilliseconds, formatRate } from './format.js';
 import { applyStatic, t } from './i18n.js';
 import { setClass, setText } from './ui.js';
+import { PROTOCOLS } from './types.js';
 import type { MetricsSnapshot, Protocol, StreamParams } from './types.js';
-
-/** Which of the two presentations is on screen. */
-export type ViewMode = 'simple' | 'pro';
 
 /** Line colour per protocol, shared by the cards and the charts. */
 export const PROTOCOL_COLORS: Record<Protocol, string> = {
@@ -13,14 +11,14 @@ export const PROTOCOL_COLORS: Record<Protocol, string> = {
   websocket: '#c792ea',
 };
 
-/** Stream endpoint each card talks to, shown under its title in the pro view. */
+/** Stream endpoint each card talks to, shown under its title. */
 export const PROTOCOL_ENDPOINTS: Record<Protocol, string> = {
   'http-stream': '/api/stream/http',
   sse: '/api/stream/sse',
   websocket: '/api/stream/ws',
 };
 
-// ---------------------------------------------------------------- pro tables
+// --------------------------------------------------------------------- tables
 
 /** Table 1: connection and traffic. */
 const TRAFFIC_ROWS = [
@@ -48,45 +46,6 @@ const TIMING_ROWS = [
 type RowKey = (typeof TRAFFIC_ROWS)[number] | (typeof TIMING_ROWS)[number];
 
 type CellMap = Map<RowKey, HTMLTableCellElement>;
-
-// ------------------------------------------------------------- simple tables
-
-/**
- * The plain-language rows. They say the same things as the pro tables but in
- * words someone who has never read a protocol spec would use.
- */
-const SIMPLE_ROWS = ['frames', 'size', 'pace', 'stalls', 'worst', 'drops'] as const;
-
-type SimpleRowKey = (typeof SIMPLE_ROWS)[number];
-
-type SimpleCellMap = Map<SimpleRowKey, HTMLTableCellElement>;
-
-// ---------------------------------------------------------------- formatting
-
-/** Counts read better with a thousands separator: 1,204 rather than 1204. */
-function formatCount(value: number): string {
-  return Math.max(0, Math.round(value)).toLocaleString();
-}
-
-/**
- * A duration a layperson can picture: "120 毫秒", "1.4 秒", "2 分钟". The pro
- * view keeps the raw millisecond figure instead.
- */
-function friendlyDuration(ms: number | null): string {
-  if (ms === null || !Number.isFinite(ms)) return t('value.na');
-  if (ms < 1000) return `${Math.round(ms)} ${t('unit.ms')}`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)} ${t('unit.seconds')}`;
-  return `${Math.round(ms / 60000)} ${t('unit.minutes')}`;
-}
-
-/** Decimal units, which is what people expect from a file size. */
-function friendlyBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return t('value.na');
-  if (bytes < 1024) return `${Math.round(bytes)} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
 
 // ------------------------------------------------------------------ verdicts
 
@@ -158,92 +117,6 @@ export function verdictFor(
   };
 }
 
-export interface SimpleVerdict {
-  level: 'good' | 'warn' | 'bad' | 'idle';
-  /** Short badge next to the card title. */
-  status: string;
-  /** One sentence explaining what that means. */
-  text: string;
-}
-
-/**
- * The same judgement as {@link verdictFor}, phrased without a single technical
- * term. Thresholds are deliberately hidden: "it stalled twice for up to 1.4
- * seconds" is actionable, "the gap exceeded 3x the target interval" is not.
- */
-export function simpleVerdictFor(snapshot: MetricsSnapshot): SimpleVerdict {
-  if (snapshot.state === 'idle') {
-    return { level: 'idle', status: t('simple.status.idle'), text: t('simple.verdict.noData') };
-  }
-
-  if (snapshot.frames === 0) {
-    if (snapshot.state === 'error') {
-      return { level: 'bad', status: t('simple.status.dead'), text: t('simple.verdict.error') };
-    }
-    return {
-      level: 'idle',
-      status: t('simple.status.connecting'),
-      text: t('simple.verdict.noData'),
-    };
-  }
-
-  // Data arrived, then the connection died: that is worth flagging even when no
-  // single gap crossed the stall threshold.
-  if (snapshot.state === 'error' || snapshot.state === 'disconnected') {
-    return { level: 'bad', status: t('simple.status.broke'), text: t('simple.verdict.broke') };
-  }
-
-  const gap = friendlyDuration(snapshot.longestGapMs);
-
-  if (snapshot.interruptions === 0) {
-    return { level: 'good', status: t('simple.status.flowing'), text: t('simple.verdict.flowing') };
-  }
-  if (snapshot.interruptions <= 2) {
-    return {
-      level: 'warn',
-      status: t('simple.status.minor'),
-      text: t('simple.verdict.minor', { gap }),
-    };
-  }
-  return {
-    level: 'bad',
-    status: t('simple.status.laggy'),
-    text: t('simple.verdict.laggy', { count: snapshot.interruptions, gap }),
-  };
-}
-
-export interface SimpleSummary {
-  level: 'good' | 'warn' | 'idle';
-  text: string;
-}
-
-/** One sentence covering all three protocols, for the panel above the cards. */
-export function simpleSummaryFor(
-  entries: readonly { protocol: Protocol; snapshot: MetricsSnapshot }[],
-): SimpleSummary {
-  const measured = entries.filter((entry) => entry.snapshot.frames > 0);
-  if (measured.length === 0) {
-    return { level: 'idle', text: t('simple.summaryWaiting') };
-  }
-
-  const troubled = measured.filter(
-    (entry) =>
-      entry.snapshot.interruptions > 0 ||
-      entry.snapshot.state === 'error' ||
-      entry.snapshot.state === 'disconnected',
-  );
-  if (troubled.length === 0) {
-    return { level: 'good', text: t('simple.summaryAll') };
-  }
-
-  return {
-    level: 'warn',
-    text: t('simple.summarySome', {
-      protocols: troubled.map((entry) => t(`simple.name.${entry.protocol}`)).join(t('list.sep')),
-    }),
-  };
-}
-
 // -------------------------------------------------------------- card builders
 
 function buildTable(titleKey: string, rows: readonly RowKey[]): { block: HTMLElement; cells: CellMap } {
@@ -281,46 +154,6 @@ function buildTable(titleKey: string, rows: readonly RowKey[]): { block: HTMLEle
   table.append(tbody);
   block.append(title, table);
   return { block, cells };
-}
-
-function buildSimpleBlock(): {
-  block: HTMLElement;
-  cells: SimpleCellMap;
-  verdict: HTMLElement;
-} {
-  const block = document.createElement('div');
-  block.className = 'proto-simple';
-
-  const table = document.createElement('table');
-  table.className = 'simple-table';
-
-  const tbody = document.createElement('tbody');
-  const cells: SimpleCellMap = new Map();
-
-  for (const key of SIMPLE_ROWS) {
-    const tr = document.createElement('tr');
-
-    const th = document.createElement('th');
-    th.scope = 'row';
-    th.dataset.i18n = `simple.row.${key}`;
-    th.textContent = t(`simple.row.${key}`);
-
-    const td = document.createElement('td');
-    td.className = 'simple-value';
-    td.textContent = t('value.na');
-
-    tr.append(th, td);
-    tbody.append(tr);
-    cells.set(key, td);
-  }
-
-  table.append(tbody);
-
-  const verdict = document.createElement('p');
-  verdict.className = 'simple-verdict';
-
-  block.append(table);
-  return { block, cells, verdict };
 }
 
 /**
@@ -365,11 +198,12 @@ export interface ChartSlots {
 // ------------------------------------------------------------------ the card
 
 /**
- * One protocol card. It carries both presentations at once and CSS decides which
- * one is visible, so flipping modes is instant and never loses a reading.
+ * One protocol card, laid out as two columns:
  *
- *   .proto-simple   plain language, no jargon
- *   .proto-pro      the two full metric tables
+ *   .proto-data     the two metric tables, stacked
+ *   .proto-charts   this protocol's own charts, stacked
+ *
+ * The verdict closes the card underneath both columns.
  */
 export class ProtocolCard {
   readonly root: HTMLElement;
@@ -377,11 +211,8 @@ export class ProtocolCard {
   readonly chartSlots: ChartSlots;
 
   private readonly cells: CellMap;
-  private readonly simpleCells: SimpleCellMap;
   private readonly statePill: HTMLElement;
-  private readonly simplePill: HTMLElement;
   private readonly verdict: HTMLElement;
-  private readonly simpleVerdict: HTMLElement;
 
   /** Kept so a language switch can redraw text that is not in the markup. */
   private last: {
@@ -402,54 +233,23 @@ export class ProtocolCard {
 
     const name = document.createElement('h2');
     name.className = 'proto-name';
-
-    const simpleName = document.createElement('span');
-    simpleName.className = 'only-simple';
-    simpleName.dataset.i18n = `simple.name.${protocol}`;
-    simpleName.textContent = t(`simple.name.${protocol}`);
-
-    const proName = document.createElement('span');
-    proName.className = 'only-pro';
-    proName.dataset.i18n = `proto.${protocol}`;
-    proName.textContent = t(`proto.${protocol}`);
-
-    name.append(simpleName, proName);
-
-    const simplePill = document.createElement('span');
-    simplePill.className = 'pill only-simple simple-pill';
+    name.dataset.i18n = `proto.${protocol}`;
+    name.textContent = t(`proto.${protocol}`);
 
     const pill = document.createElement('span');
-    pill.className = 'pill only-pro state-idle';
+    pill.className = 'pill state-idle';
     pill.textContent = t('state.idle');
 
-    head.append(name, simplePill, pill);
+    head.append(name, pill);
 
     const endpoint = document.createElement('code');
-    endpoint.className = 'proto-endpoint only-pro';
+    endpoint.className = 'proto-endpoint';
     endpoint.textContent = PROTOCOL_ENDPOINTS[protocol];
-
-    const about = document.createElement('p');
-    about.className = 'simple-about only-simple';
-    about.dataset.i18n = `simple.about.${protocol}`;
-    about.textContent = t(`simple.about.${protocol}`);
 
     const traffic = buildTable('table.traffic', TRAFFIC_ROWS);
     const timing = buildTable('table.timing', TIMING_ROWS);
 
-    const verdict = document.createElement('p');
-    verdict.className = 'proto-verdict only-pro';
-
-    const pro = document.createElement('div');
-    pro.className = 'proto-pro only-pro';
-    pro.append(traffic.block, timing.block);
-
-    const simple = buildSimpleBlock();
-    simple.block.classList.add('only-simple');
-    simple.verdict.classList.add('only-simple');
-
-    // Every protocol carries its own charts, and they sit inside that protocol's
-    // block rather than in one shared panel at the bottom of the page. They are
-    // not part of either view, so they show in both.
+    // Every protocol carries its own charts, inside its own card.
     const interval = buildChartBlock(
       `chart-interval-${protocol}`,
       'chart.interval',
@@ -467,30 +267,26 @@ export class ProtocolCard {
     charts.append(interval.root, throughput.root, peaks.root);
 
     // Readings on the left, charts on the right. Each column stacks its own
-    // contents, so a full-width card uses its width instead of leaving a narrow
-    // table adrift in empty space.
-    //
-    // The plain-language verdict goes inside the left column so it sits directly
-    // under the numbers it describes; in the professional view the two tables
-    // already fill that column, so that verdict spans the card instead.
+    // contents, so the card uses its width instead of leaving a narrow table
+    // adrift in a half-empty row.
     const data = document.createElement('div');
     data.className = 'proto-data';
-    data.append(simple.block, simple.verdict, pro);
+    data.append(traffic.block, timing.block);
 
     const body = document.createElement('div');
     body.className = 'proto-body';
     body.append(data, charts);
 
-    root.append(head, endpoint, about, body, verdict);
+    const verdict = document.createElement('p');
+    verdict.className = 'proto-verdict';
+
+    root.append(head, endpoint, body, verdict);
 
     this.root = root;
     this.chartSlots = { interval: interval.body, throughput: throughput.body, peaks: peaks.body };
     this.statePill = pill;
-    this.simplePill = simplePill;
     this.verdict = verdict;
-    this.simpleVerdict = simple.verdict;
     this.cells = new Map([...traffic.cells, ...timing.cells]);
-    this.simpleCells = simple.cells;
   }
 
   /**
@@ -515,24 +311,15 @@ export class ProtocolCard {
     this.last = null;
 
     setText(this.statePill, t('state.idle'));
-    setClass(this.statePill, 'pill', 'only-pro', 'state-idle');
-
-    setText(this.simplePill, t('simple.status.idle'));
-    setClass(this.simplePill, 'pill', 'only-simple', 'simple-pill');
+    setClass(this.statePill, 'pill', 'state-idle');
 
     for (const [, cell] of this.cells) {
       setText(cell, t('value.na'));
       setClass(cell, 'mono');
     }
-    for (const [, cell] of this.simpleCells) {
-      setText(cell, t('value.na'));
-    }
 
     setText(this.verdict, '');
-    setClass(this.verdict, 'proto-verdict', 'only-pro');
-
-    setText(this.simpleVerdict, '');
-    setClass(this.simpleVerdict, 'simple-verdict', 'only-simple');
+    setClass(this.verdict, 'proto-verdict');
   }
 
   update(
@@ -544,22 +331,9 @@ export class ProtocolCard {
   ): void {
     this.last = { snapshot, params, expectedFrames, untilStopped, running };
 
-    this.updatePro(snapshot, params, expectedFrames, untilStopped, running);
-    this.updateSimple(snapshot);
-  }
-
-  // --- professional presentation ------------------------------------------
-
-  private updatePro(
-    snapshot: MetricsSnapshot,
-    params: StreamParams,
-    expectedFrames: number,
-    untilStopped: boolean,
-    running: boolean,
-  ): void {
     const state = snapshot.state;
     setText(this.statePill, t(`state.${state}`));
-    setClass(this.statePill, 'pill', 'only-pro', `state-${state}`);
+    setClass(this.statePill, 'pill', `state-${state}`);
 
     const cell = (key: RowKey): HTMLTableCellElement | null => this.cells.get(key) ?? null;
 
@@ -619,58 +393,165 @@ export class ProtocolCard {
 
     const verdict = verdictFor(snapshot, params, expectedFrames, untilStopped, running);
     setText(this.verdict, verdict.text);
-    setClass(this.verdict, 'proto-verdict', 'only-pro', `verdict-${verdict.level}`);
+    setClass(this.verdict, 'proto-verdict', `verdict-${verdict.level}`);
+  }
+}
+
+// ------------------------------------------------------- cross-protocol table
+
+/**
+ * The frame-interval rows the overview compares.
+ *
+ * Deliberately narrow: the point of this table is to answer "did one protocol
+ * behave differently" at a glance, not to repeat every reading the cards below
+ * already carry. The connection-level counters (missing frames, reconnects) are
+ * not interval data and stay on the cards.
+ */
+const OVERVIEW_ROWS = [
+  'target',
+  'intervalAvg',
+  'intervalMin',
+  'intervalMax',
+  'longestGap',
+  'interruptions',
+] as const;
+
+type OverviewRowKey = (typeof OVERVIEW_ROWS)[number];
+
+/** One protocol's latest reading, as handed to the overview table. */
+export interface OverviewEntry {
+  protocol: Protocol;
+  snapshot: MetricsSnapshot;
+}
+
+/**
+ * The table at the top of the page: frame-interval readings for all three
+ * protocols side by side, so a difference between them is visible without
+ * scrolling back and forth between cards.
+ *
+ * The columns are fixed to the canonical protocol order whether or not a
+ * protocol is part of the current run, so the table never reflows between runs;
+ * a protocol that is not running simply reads "—".
+ */
+export class OverviewTable {
+  private readonly cells = new Map<Protocol, Map<OverviewRowKey, HTMLTableCellElement>>();
+  private last: { entries: readonly OverviewEntry[]; params: StreamParams } | null = null;
+
+  constructor(private readonly root: HTMLElement) {
+    root.append(this.build());
   }
 
-  // --- plain-language presentation ----------------------------------------
+  private build(): HTMLTableElement {
+    const table = document.createElement('table');
+    table.className = 'metrics-table overview-table';
 
-  private updateSimple(snapshot: MetricsSnapshot): void {
-    const verdict = simpleVerdictFor(snapshot);
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
 
-    setText(this.simplePill, verdict.status);
-    setClass(this.simplePill, 'pill', 'only-simple', 'simple-pill', `simple-${verdict.level}`);
+    const corner = document.createElement('th');
+    corner.scope = 'col';
+    corner.dataset.i18n = 'overview.metric';
+    corner.textContent = t('overview.metric');
+    headRow.append(corner);
 
-    setText(this.simpleVerdict, verdict.text);
-    setClass(this.simpleVerdict, 'simple-verdict', 'only-simple', `verdict-${verdict.level}`);
+    for (const protocol of PROTOCOLS) {
+      const th = document.createElement('th');
+      th.scope = 'col';
+      th.dataset.proto = protocol;
+      th.dataset.i18n = `proto.${protocol}`;
+      th.textContent = t(`proto.${protocol}`);
+      headRow.append(th);
+      this.cells.set(protocol, new Map());
+    }
+    thead.append(headRow);
 
-    const cell = (key: SimpleRowKey): HTMLTableCellElement | null =>
-      this.simpleCells.get(key) ?? null;
+    const tbody = document.createElement('tbody');
+    for (const key of OVERVIEW_ROWS) {
+      const tr = document.createElement('tr');
 
-    setText(cell('frames'), t('simple.value.frames', { count: formatCount(snapshot.frames) }));
-    setText(cell('size'), friendlyBytes(snapshot.bytes));
+      const th = document.createElement('th');
+      th.scope = 'row';
+      th.dataset.i18n = `row.${key}`;
+      th.textContent = t(`row.${key}`);
+      tr.append(th);
 
-    setText(
-      cell('pace'),
-      snapshot.avgIntervalMs === null
-        ? t('value.na')
-        : t('simple.value.pace', { interval: friendlyDuration(snapshot.avgIntervalMs) }),
-    );
-
-    const stalls = cell('stalls');
-    if (snapshot.interruptions === 0) {
-      setText(stalls, t('simple.value.noStalls'));
-      setClass(stalls, 'simple-value', 'ok');
-    } else {
-      setText(stalls, t('simple.value.stalls', { count: snapshot.interruptions }));
-      setClass(stalls, 'simple-value', 'bad');
+      for (const protocol of PROTOCOLS) {
+        const td = document.createElement('td');
+        td.className = 'mono';
+        td.textContent = t('value.na');
+        tr.append(td);
+        this.cells.get(protocol)?.set(key, td);
+      }
+      tbody.append(tr);
     }
 
-    const worst = cell('worst');
-    if (snapshot.longestGapMs <= 0) {
-      setText(worst, t('simple.value.noWorst'));
-      setClass(worst, 'simple-value', 'ok');
-    } else {
-      setText(worst, friendlyDuration(snapshot.longestGapMs));
-      setClass(worst, 'simple-value', 'bad');
-    }
+    table.append(thead, tbody);
+    return table;
+  }
 
-    const drops = cell('drops');
-    if (snapshot.reconnects === 0) {
-      setText(drops, t('simple.value.noDrops'));
-      setClass(drops, 'simple-value', 'ok');
-    } else {
-      setText(drops, t('simple.value.drops', { count: snapshot.reconnects }));
-      setClass(drops, 'simple-value', 'warn');
+  private cell(protocol: Protocol, key: OverviewRowKey): HTMLTableCellElement | null {
+    return this.cells.get(protocol)?.get(key) ?? null;
+  }
+
+  /** Clears every column back to "—". */
+  reset(): void {
+    this.last = null;
+    for (const protocol of PROTOCOLS) {
+      for (const key of OVERVIEW_ROWS) {
+        const td = this.cell(protocol, key);
+        setText(td, t('value.na'));
+        setClass(td, 'mono');
+      }
+    }
+  }
+
+  /** Re-applies translated headers, then redraws values built in code. */
+  renderLabels(): void {
+    applyStatic(this.root);
+    if (this.last) this.update(this.last.entries, this.last.params);
+  }
+
+  update(entries: readonly OverviewEntry[], params: StreamParams): void {
+    this.last = { entries, params };
+
+    const byProtocol = new Map(entries.map((entry) => [entry.protocol, entry.snapshot]));
+
+    for (const protocol of PROTOCOLS) {
+      const snapshot = byProtocol.get(protocol);
+
+      if (!snapshot) {
+        for (const key of OVERVIEW_ROWS) {
+          const td = this.cell(protocol, key);
+          setText(td, t('value.na'));
+          setClass(td, 'mono');
+        }
+        continue;
+      }
+
+      setText(this.cell(protocol, 'target'), formatMilliseconds(params.interval));
+      setText(this.cell(protocol, 'intervalAvg'), formatMilliseconds(snapshot.avgIntervalMs));
+      setText(this.cell(protocol, 'intervalMin'), formatMilliseconds(snapshot.minIntervalMs));
+
+      const maxInterval = this.cell(protocol, 'intervalMax');
+      setText(maxInterval, formatMilliseconds(snapshot.maxIntervalMs));
+      setClass(
+        maxInterval,
+        'mono',
+        snapshot.maxIntervalMs !== null && snapshot.maxIntervalMs > snapshot.thresholdMs
+          ? 'bad'
+          : '',
+      );
+
+      const longestGap = this.cell(protocol, 'longestGap');
+      setText(
+        longestGap,
+        snapshot.longestGapMs > 0 ? formatMilliseconds(snapshot.longestGapMs) : t('value.none'),
+      );
+      setClass(longestGap, 'mono', snapshot.longestGapMs > 0 ? 'bad' : 'ok');
+
+      const interruptions = this.cell(protocol, 'interruptions');
+      setText(interruptions, String(snapshot.interruptions));
+      setClass(interruptions, 'mono', snapshot.interruptions > 0 ? 'bad' : 'ok');
     }
   }
 }
