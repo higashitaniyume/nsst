@@ -262,15 +262,18 @@ body {
 
 /* ---------------------------------------------------------- protocol cards */
 
+/* One protocol per row — HTTP, then SSE, then WebSocket — and each card stacks
+   its two metric tables vertically as well, so every reading lands in a single
+   column instead of a three-across grid. */
 .protocol-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  grid-template-columns: 1fr;
   gap: 16px;
   align-items: start;
 }
 
 .proto-card {
-  padding: 14px;
+  padding: 18px 20px;
   border-top-width: 3px;
 }
 
@@ -384,13 +387,19 @@ body {
   border-bottom: none;
 }
 
+/* The label column shrinks to its content and the value sits immediately after
+   it. Right-aligning the value would push it to the far edge of a full-width
+   row, thousands of pixels away from the label it belongs to. */
 .metrics-table th {
+  width: 1%;
+  padding-right: 56px;
   font-weight: 400;
+  white-space: nowrap;
   color: var(--text-dim);
 }
 
 .metrics-table td {
-  text-align: right;
+  text-align: left;
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   color: var(--text);
@@ -426,6 +435,7 @@ body {
 
 .proto-verdict {
   margin: 12px 0 0;
+  max-width: 92ch;
   padding: 8px 10px;
   border-radius: 7px;
   font-size: 12px;
@@ -485,6 +495,7 @@ body.mode-pro .only-simple {
 
 .simple-about {
   margin: 8px 0 12px;
+  max-width: 92ch;
   font-size: 12.5px;
   line-height: 1.6;
   color: var(--text-faint);
@@ -510,12 +521,15 @@ body.mode-pro .only-simple {
 }
 
 .simple-table th {
+  width: 1%;
+  padding-right: 48px;
   font-weight: 400;
+  white-space: nowrap;
   color: var(--text-dim);
 }
 
 .simple-table td {
-  text-align: right;
+  text-align: left;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text);
@@ -560,6 +574,7 @@ body.mode-pro .only-simple {
    more line height and a little more padding than the pro one. */
 .simple-verdict {
   margin: 12px 0 0;
+  max-width: 92ch;
   padding: 10px 12px;
   border-radius: 7px;
   font-size: 13px;
@@ -596,29 +611,64 @@ body.mode-simple .proto-name {
 
 /* ------------------------------------------------------------------ charts */
 
-.chart-panel .chart {
-  width: 100%;
-  min-height: 190px;
-  margin-top: 4px;
+/* Each protocol card carries its own charts, one under the other, so a card
+   reads top to bottom: the numbers, then the pictures, then the conclusion. */
+.proto-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
 }
 
-details.chart-panel summary {
+.mini-chart {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-inset);
+}
+
+.mini-chart > .table-title {
+  margin: 0 0 2px;
+  font-size: 12.5px;
+}
+
+.mini-chart > .hint {
+  margin: 0 0 6px;
+  font-size: 11px;
+}
+
+.mini-chart .chart {
+  width: 100%;
+  min-width: 0;
+}
+
+details.mini-chart > summary {
   cursor: pointer;
   list-style: none;
   user-select: none;
 }
 
-details.chart-panel summary::-webkit-details-marker {
+details.mini-chart > summary::-webkit-details-marker {
   display: none;
 }
 
-details.chart-panel summary::before {
+details.mini-chart > summary::before {
   content: "▸ ";
   color: var(--text-faint);
 }
 
-details.chart-panel[open] summary::before {
+details.mini-chart[open] > summary::before {
   content: "▾ ";
+}
+
+details.mini-chart[open] > summary {
+  margin-bottom: 6px;
+}
+
+/* A collapsed chart panel has no measured width, so hide its canvas entirely
+   rather than leaving uPlot with a zero-height box. */
+details.mini-chart:not([open]) .chart {
+  display: none;
 }
 
 .u-legend {
@@ -824,12 +874,12 @@ details.chart-panel[open] summary::before {
     padding: 14px 12px 48px;
   }
 
-  .protocol-grid {
-    grid-template-columns: 1fr;
-  }
-
   .runbar {
     align-items: flex-start;
+  }
+
+  .proto-card {
+    padding: 14px 12px;
   }
 
   .metrics-table th,
@@ -838,10 +888,18 @@ details.chart-panel[open] summary::before {
     font-size: 12px;
   }
 
+  .metrics-table th {
+    padding-right: 18px;
+  }
+
   .simple-table th,
   .simple-table td {
     padding: 5px 4px;
     font-size: 13px;
+  }
+
+  .simple-table th {
+    padding-right: 16px;
   }
 
   .simple-summary {

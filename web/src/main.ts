@@ -272,9 +272,10 @@ class StreamRun {
 class Suite {
   private readonly cards = new Map<Protocol, ProtocolCard>();
   private readonly runs = new Map<Protocol, StreamRun>();
-  private readonly intervalChart: MultiChart;
-  private readonly throughputChart: MultiChart;
-  private readonly peaksChart: MultiChart;
+  /** Chart instances keyed by protocol; each one carries only its own series. */
+  private readonly intervalCharts = new Map<Protocol, MultiChart>();
+  private readonly throughputCharts = new Map<Protocol, MultiChart>();
+  private readonly peaksCharts = new Map<Protocol, MultiChart>();
 
   private readonly log: EventLog;
   private readonly summary: HTMLElement;
@@ -292,15 +293,9 @@ class Suite {
   constructor(options: {
     grid: HTMLElement;
     summary: HTMLElement;
-    intervalChart: MultiChart;
-    throughputChart: MultiChart;
-    peaksChart: MultiChart;
     log: EventLog;
     onRunningChanged: (running: boolean) => void;
   }) {
-    this.intervalChart = options.intervalChart;
-    this.throughputChart = options.throughputChart;
-    this.peaksChart = options.peaksChart;
     this.log = options.log;
     this.summary = options.summary;
     this.onRunningChanged = options.onRunningChanged;
@@ -309,21 +304,70 @@ class Suite {
       const card = new ProtocolCard(protocol);
       this.cards.set(protocol, card);
       options.grid.append(card.root);
+
+      // Every protocol plots only itself, so each line keeps its own colour and
+      // the charts live inside the block they describe.
+      const label = t(`proto.${protocol}`);
+      const stroke = PROTOCOL_COLORS[protocol];
+
+      this.intervalCharts.set(
+        protocol,
+        new MultiChart(card.chartSlots.interval, {
+          series: [{ label, stroke }],
+          format: formatAxisMs,
+          height: 160,
+        }),
+      );
+      this.throughputCharts.set(
+        protocol,
+        new MultiChart(card.chartSlots.throughput, {
+          series: [{ label, stroke }],
+          format: formatAxisRate,
+          height: 160,
+        }),
+      );
+      this.peaksCharts.set(
+        protocol,
+        new MultiChart(card.chartSlots.peaks, {
+          series: [{ label, stroke, asPoints: true }],
+          format: formatAxisMs,
+          height: 140,
+        }),
+      );
     }
+  }
+
+  private allCharts(): MultiChart[] {
+    return [
+      ...this.intervalCharts.values(),
+      ...this.throughputCharts.values(),
+      ...this.peaksCharts.values(),
+    ];
+  }
+
+  /**
+   * Remeasures every chart. The panels are laid out inside cards that CSS hides
+   * in one of the two views, so a chart built while hidden needs to be told when
+   * its container finally has a width.
+   */
+  resizeCharts(): void {
+    for (const chart of this.allCharts()) chart.resize();
   }
 
   get isRunning(): boolean {
     return this.running;
   }
 
-  /** Re-applies translated labels on the cards, the summary and the chart legends. */
+  /** Re-applies translated labels on the cards, the charts and the summary. */
   renderLabels(): void {
-    for (const [, card] of this.cards) card.renderLabels();
+    for (const [protocol, card] of this.cards) {
+      card.renderLabels();
+      const label = t(`proto.${protocol}`);
+      this.intervalCharts.get(protocol)?.setSeriesLabels([label]);
+      this.throughputCharts.get(protocol)?.setSeriesLabels([label]);
+      this.peaksCharts.get(protocol)?.setSeriesLabels([label]);
+    }
     this.renderSummary();
-    const labels = PROTOCOLS.map((protocol) => t(`proto.${protocol}`));
-    this.intervalChart.setSeriesLabels(labels);
-    this.throughputChart.setSeriesLabels(labels);
-    this.peaksChart.setSeriesLabels(labels);
   }
 
   /**
@@ -370,9 +414,7 @@ class Suite {
       ? 0
       : Math.ceil((params.duration * 1000) / params.interval);
 
-    this.intervalChart.clear();
-    this.throughputChart.clear();
-    this.peaksChart.clear();
+    for (const chart of this.allCharts()) chart.clear();
     for (const [, card] of this.cards) card.reset();
 
     this.runs.clear();
@@ -434,55 +476,28 @@ class Suite {
     const now = performance.now();
     const x = (now - this.startedAt) / 1000;
 
-    const intervals: (number | null)[] = [];
-    const throughputs: (number | null)[] = [];
-    const peaks: (number | null)[] = [];
-
     for (const protocol of PROTOCOLS) {
       const run = this.runs.get(protocol);
       // sample() returns null once a run has settled, which ends its series.
       const sample = run ? run.sample(now) : null;
+      if (!sample) continue;
 
-      if (!sample) {
-        intervals.push(null);
-        throughputs.push(null);
-        peaks.push(null);
-        continue;
+      // Each chart carries a single protocol, so a settled stream simply stops
+      // adding points instead of leaving a hole on a shared axis.
+      this.intervalCharts.get(protocol)?.push(x, [sample.intervalMs]);
+      this.throughputCharts.get(protocol)?.push(x, [sample.throughputBps]);
+      if (sample.stallMs > 0) {
+        this.peaksCharts.get(protocol)?.push(x, [sample.stallMs]);
       }
-
-      intervals.push(sample.intervalMs);
-      throughputs.push(sample.throughputBps);
-      peaks.push(sample.stallMs > 0 ? sample.stallMs : null);
     }
 
     // The cards and the summary are painted from the snapshots rather than from
     // the chart samples, so a settled stream still shows its final verdict.
     this.paint(now);
-
-    this.intervalChart.push(x, intervals);
-    this.throughputChart.push(x, throughputs);
-    if (peaks.some((value) => value !== null)) {
-      this.peaksChart.push(x, peaks);
-    }
   }
 }
 
 // --------------------------------------------------------------------- boot
-
-function seriesSpecs() {
-  return PROTOCOLS.map((protocol) => ({
-    label: t(`proto.${protocol}`),
-    stroke: PROTOCOL_COLORS[protocol],
-  }));
-}
-
-function peakSpecs() {
-  return PROTOCOLS.map((protocol) => ({
-    label: t(`proto.${protocol}`),
-    stroke: PROTOCOL_COLORS[protocol],
-    asPoints: true,
-  }));
-}
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -492,22 +507,6 @@ async function boot(): Promise<void> {
   applyStatic();
 
   const log = new EventLog(requireElement('log-list'));
-
-  const intervalChart = new MultiChart(requireElement('chart-interval'), {
-    series: seriesSpecs(),
-    format: formatAxisMs,
-    height: 200,
-  });
-  const throughputChart = new MultiChart(requireElement('chart-throughput'), {
-    series: seriesSpecs(),
-    format: formatAxisRate,
-    height: 200,
-  });
-  const peaksChart = new MultiChart(requireElement('chart-peaks'), {
-    series: peakSpecs(),
-    format: formatAxisMs,
-    height: 180,
-  });
 
   const startButton = requireElement<HTMLButtonElement>('start-button');
   const stopButton = requireElement<HTMLButtonElement>('stop-button');
@@ -570,9 +569,6 @@ async function boot(): Promise<void> {
   const suite = new Suite({
     grid: requireElement('protocol-grid'),
     summary: requireElement('simple-summary'),
-    intervalChart,
-    throughputChart,
-    peaksChart,
     log,
     onRunningChanged: (running) => {
       startButton.disabled = running;
@@ -589,6 +585,14 @@ async function boot(): Promise<void> {
       cfgNotice.className = running ? 'notice notice-locked' : 'notice';
     },
   });
+
+  // The collapse panels hold no measurable width while closed, so remeasure the
+  // charts once one is opened.
+  for (const panel of document.querySelectorAll<HTMLDetailsElement>('details.mini-chart')) {
+    panel.addEventListener('toggle', () => {
+      if (panel.open) window.requestAnimationFrame(() => suite.resizeCharts());
+    });
+  }
 
   // --- server status ------------------------------------------------------
   let serverInfo = { version: '', uptime: 0, online: false };
@@ -649,16 +653,9 @@ async function boot(): Promise<void> {
     setText(modeButton, t(mode === 'simple' ? 'mode.toPro' : 'mode.toSimple'));
     modeButton.title = t(mode === 'simple' ? 'mode.toProTitle' : 'mode.toSimpleTitle');
 
-    // uPlot measures its container, and in simple mode the chart panels are
-    // display:none. Remeasuring once they are visible keeps the charts from
-    // collapsing to their minimum width.
-    if (mode === 'pro') {
-      window.requestAnimationFrame(() => {
-        intervalChart.resize();
-        throughputChart.resize();
-        peaksChart.resize();
-      });
-    }
+    // uPlot measures its container, and CSS hides one of the two presentations.
+    // Remeasuring on every switch keeps the charts from keeping a stale width.
+    window.requestAnimationFrame(() => suite.resizeCharts());
   }
 
   modeButton.addEventListener('click', () => {

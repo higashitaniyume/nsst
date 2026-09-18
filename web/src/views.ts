@@ -319,8 +319,47 @@ function buildSimpleBlock(): {
   const verdict = document.createElement('p');
   verdict.className = 'simple-verdict';
 
-  block.append(table, verdict);
+  block.append(table);
   return { block, cells, verdict };
+}
+
+/**
+ * The frame for one chart inside a protocol card. The card owns the markup, the
+ * suite owns the uPlot instance that goes into `body` — that keeps chart
+ * construction out of the view layer, which has no data to plot yet.
+ */
+function buildChartBlock(
+  id: string,
+  titleKey: string,
+  hintKey: string,
+  collapsible = false,
+): { root: HTMLElement; body: HTMLElement } {
+  const root = document.createElement(collapsible ? 'details' : 'div');
+  root.className = collapsible ? 'mini-chart mini-chart-collapsible' : 'mini-chart';
+
+  const title = document.createElement(collapsible ? 'summary' : 'h3');
+  title.className = 'table-title';
+  title.dataset.i18n = titleKey;
+  title.textContent = t(titleKey);
+
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.dataset.i18n = hintKey;
+  hint.textContent = t(hintKey);
+
+  const body = document.createElement('div');
+  body.className = 'chart';
+  body.id = id;
+
+  root.append(title, hint, body);
+  return { root, body };
+}
+
+/** Where the suite mounts each protocol's own charts. */
+export interface ChartSlots {
+  interval: HTMLElement;
+  throughput: HTMLElement;
+  peaks: HTMLElement;
 }
 
 // ------------------------------------------------------------------ the card
@@ -334,6 +373,8 @@ function buildSimpleBlock(): {
  */
 export class ProtocolCard {
   readonly root: HTMLElement;
+  /** Empty frames the suite fills with this protocol's own charts. */
+  readonly chartSlots: ChartSlots;
 
   private readonly cells: CellMap;
   private readonly simpleCells: SimpleCellMap;
@@ -396,18 +437,40 @@ export class ProtocolCard {
     const timing = buildTable('table.timing', TIMING_ROWS);
 
     const verdict = document.createElement('p');
-    verdict.className = 'proto-verdict';
+    verdict.className = 'proto-verdict only-pro';
 
     const pro = document.createElement('div');
     pro.className = 'proto-pro only-pro';
-    pro.append(traffic.block, timing.block, verdict);
+    pro.append(traffic.block, timing.block);
 
     const simple = buildSimpleBlock();
     simple.block.classList.add('only-simple');
+    simple.verdict.classList.add('only-simple');
 
-    root.append(head, endpoint, about, simple.block, pro);
+    // Every protocol carries its own charts, and they sit inside that protocol's
+    // block rather than in one shared panel at the bottom of the page. They are
+    // not part of either view, so they show in both.
+    const interval = buildChartBlock(
+      `chart-interval-${protocol}`,
+      'chart.interval',
+      'chart.intervalHint',
+    );
+    const throughput = buildChartBlock(
+      `chart-throughput-${protocol}`,
+      'chart.throughput',
+      'chart.throughputHint',
+    );
+    const peaks = buildChartBlock(`chart-peaks-${protocol}`, 'chart.peaks', 'chart.peaksHint', true);
+
+    const charts = document.createElement('div');
+    charts.className = 'proto-charts';
+    charts.append(interval.root, throughput.root, peaks.root);
+
+    // Numbers first, then the charts, then the conclusion — in both views.
+    root.append(head, endpoint, about, simple.block, pro, charts, simple.verdict, verdict);
 
     this.root = root;
+    this.chartSlots = { interval: interval.body, throughput: throughput.body, peaks: peaks.body };
     this.statePill = pill;
     this.simplePill = simplePill;
     this.verdict = verdict;
@@ -452,10 +515,10 @@ export class ProtocolCard {
     }
 
     setText(this.verdict, '');
-    setClass(this.verdict, 'proto-verdict');
+    setClass(this.verdict, 'proto-verdict', 'only-pro');
 
     setText(this.simpleVerdict, '');
-    setClass(this.simpleVerdict, 'simple-verdict');
+    setClass(this.simpleVerdict, 'simple-verdict', 'only-simple');
   }
 
   update(
@@ -542,7 +605,7 @@ export class ProtocolCard {
 
     const verdict = verdictFor(snapshot, params, expectedFrames, untilStopped, running);
     setText(this.verdict, verdict.text);
-    setClass(this.verdict, 'proto-verdict', `verdict-${verdict.level}`);
+    setClass(this.verdict, 'proto-verdict', 'only-pro', `verdict-${verdict.level}`);
   }
 
   // --- plain-language presentation ----------------------------------------
@@ -554,7 +617,7 @@ export class ProtocolCard {
     setClass(this.simplePill, 'pill', 'only-simple', 'simple-pill', `simple-${verdict.level}`);
 
     setText(this.simpleVerdict, verdict.text);
-    setClass(this.simpleVerdict, 'simple-verdict', `verdict-${verdict.level}`);
+    setClass(this.simpleVerdict, 'simple-verdict', 'only-simple', `verdict-${verdict.level}`);
 
     const cell = (key: SimpleRowKey): HTMLTableCellElement | null =>
       this.simpleCells.get(key) ?? null;
