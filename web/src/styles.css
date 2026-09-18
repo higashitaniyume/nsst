@@ -470,20 +470,19 @@ body {
 
 /* ---------------------------------------------------------------- live data */
 
-/* The bytes the server is sending right now, one column per protocol. This is
-   the raw stream rather than a reading about it, so it is plain monospaced text
-   with nothing that could hide a stall. */
-.live-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 10px;
-}
-
-.live-column {
+/* The bytes the server is sending right now, shown inside the card for that
+   protocol. This is the raw stream rather than a reading about it, so it is plain
+   monospaced text with nothing that could hide a stall. */
+.proto-live {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* Fills the row, which is sized by the tables and charts beside it. The text
+     must not feed its own height back into that decision, or a long buffer would
+     drag the whole card taller and taller. */
+  align-self: stretch;
+  min-height: 0;
+  overflow: hidden;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-top: 2px solid var(--border-strong);
@@ -491,15 +490,15 @@ body {
   background: var(--bg-inset);
 }
 
-.live-column[data-proto='http-stream'] {
+.proto-live[data-proto='http-stream'] {
   border-top-color: var(--http);
 }
 
-.live-column[data-proto='sse'] {
+.proto-live[data-proto='sse'] {
   border-top-color: var(--sse);
 }
 
-.live-column[data-proto='websocket'] {
+.proto-live[data-proto='websocket'] {
   border-top-color: var(--ws);
 }
 
@@ -510,7 +509,10 @@ body {
 }
 
 .live-body {
-  height: 152px;
+  /* flex-basis 0 keeps the text out of the row's height calculation; the block
+     grows to whatever height the row ends up with. */
+  flex: 1 1 0;
+  min-height: 132px;
   margin: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -524,18 +526,33 @@ body {
 
 /* ------------------------------------------------------------------ charts */
 
-/* A card is two columns: that protocol's readings on the left, its charts on the
-   right. Each column stacks its own contents, so the card uses its width instead
-   of leaving a narrow table adrift in a half-empty row. */
+/* A card is three columns: that protocol's readings, the bytes arriving right
+   now, and its charts. The live text sits directly beside the tables it belongs
+   to, so a stall can be read against the numbers that describe it without
+   leaving the card. */
 .proto-body {
   display: grid;
-  grid-template-columns: minmax(240px, 2fr) minmax(320px, 3fr);
-  gap: 20px;
+  grid-template-columns: minmax(210px, 1fr) minmax(280px, 1.5fr) minmax(320px, 2fr);
+  grid-template-areas: 'data live charts';
+  gap: 18px;
   align-items: start;
   margin-top: 12px;
 }
 
+.proto-data {
+  grid-area: data;
+}
+
+.proto-live {
+  grid-area: live;
+}
+
+.proto-charts {
+  grid-area: charts;
+}
+
 .proto-data,
+.proto-live,
 .proto-charts {
   min-width: 0;
 }
@@ -795,17 +812,26 @@ details.mini-chart:not([open]) .chart {
 
 /* -------------------------------------------------------------- responsive */
 
-/* Below this the two columns can no longer both hold their content, so the
-   charts drop underneath the readings instead of squeezing. */
+/* Below this three columns can no longer all hold their content. The live text
+   stays beside the tables — that pairing is the point — and only the charts drop
+   to a full width row underneath. */
+@media (max-width: 1240px) {
+  .proto-body {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    grid-template-areas:
+      'data live'
+      'charts charts';
+  }
+}
+
+/* Below this there is only room for one column at a time. */
 @media (max-width: 980px) {
   .proto-body {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  /* Three columns of prose become unreadably narrow; one per row keeps the
-     stream readable, which is the whole point of the panel. */
-  .live-grid {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'data'
+      'live'
+      'charts';
   }
 }
 

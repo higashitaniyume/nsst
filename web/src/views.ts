@@ -197,17 +197,22 @@ export interface ChartSlots {
 // ------------------------------------------------------------------ the card
 
 /**
- * One protocol card, laid out as two columns:
+ * One protocol card, laid out as three columns:
  *
  *   .proto-data     the two metric tables, stacked
+ *   .proto-live     the bytes arriving right now (filled by the suite)
  *   .proto-charts   this protocol's own charts, stacked
  *
- * The verdict closes the card underneath both columns.
+ * The live text sits between the readings and the charts so that a stall can be
+ * read against the numbers that describe it, inside the card for that protocol.
+ * The verdict closes the card underneath all three.
  */
 export class ProtocolCard {
   readonly root: HTMLElement;
   /** Empty frames the suite fills with this protocol's own charts. */
   readonly chartSlots: ChartSlots;
+  /** Empty frame the suite fills with the arriving bytes for this protocol. */
+  readonly liveSlot: HTMLElement;
 
   private readonly cells: CellMap;
   private readonly statePill: HTMLElement;
@@ -265,16 +270,20 @@ export class ProtocolCard {
     charts.className = 'proto-charts';
     charts.append(interval.root, throughput.root, peaks.root);
 
-    // Readings on the left, charts on the right. Each column stacks its own
-    // contents, so the card uses its width instead of leaving a narrow table
-    // adrift in a half-empty row.
+    // Readings, then the raw bytes arriving, then the charts. Each block stacks
+    // its own contents, so the card uses its width instead of leaving a narrow
+    // table adrift in a half-empty row.
     const data = document.createElement('div');
     data.className = 'proto-data';
     data.append(traffic.block, timing.block);
 
+    const live = document.createElement('div');
+    live.className = 'proto-live';
+    live.dataset.proto = protocol;
+
     const body = document.createElement('div');
     body.className = 'proto-body';
-    body.append(data, charts);
+    body.append(data, live, charts);
 
     const verdict = document.createElement('p');
     verdict.className = 'proto-verdict';
@@ -283,6 +292,7 @@ export class ProtocolCard {
 
     this.root = root;
     this.chartSlots = { interval: interval.body, throughput: throughput.body, peaks: peaks.body };
+    this.liveSlot = live;
     this.statePill = pill;
     this.verdict = verdict;
     this.cells = new Map([...traffic.cells, ...timing.cells]);

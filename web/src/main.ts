@@ -3,7 +3,7 @@ import { MultiChart } from './chart.js';
 import { formatAxisMs, formatAxisRate } from './format.js';
 import { createHTTPStreamTransport } from './http-stream.js';
 import { applyStatic, onLangChange, t, toggleLang } from './i18n.js';
-import { LiveTextPanel } from './live-text.js';
+import { LiveText } from './live-text.js';
 import { MetricsCollector } from './metrics.js';
 import { createSSETransport } from './sse.js';
 import type { CloseReason, Message, Transport, TransportCallbacks } from './transport.js';
@@ -57,7 +57,7 @@ class StreamRun {
   private readonly autoReconnect: boolean;
   private readonly deadlineMs: number;
   private readonly onSettled: () => void;
-  private readonly live: LiveTextPanel;
+  private readonly live: LiveText;
 
   private transport: Transport | null = null;
   private deadlineTimer: number | null = null;
@@ -71,7 +71,7 @@ class StreamRun {
     params: StreamParams;
     card: ProtocolCard;
     log: EventLog;
-    live: LiveTextPanel;
+    live: LiveText;
     autoReconnect: boolean;
     deadlineMs: number;
     onSettled: () => void;
@@ -105,9 +105,10 @@ class StreamRun {
     },
     onFrame: (frame, wireBytes) => {
       if (this.finished) return;
-      // The panel shows the payload exactly as it was decoded, in arrival order;
-      // a stalled stream is then visible as text that stops moving.
-      if (frame.payload) this.live.append(this.protocol, frame.payload);
+      // The block inside this card shows the payload exactly as it was decoded,
+      // in arrival order; a stalled stream is then visible as text that stops
+      // moving.
+      if (frame.payload) this.live.append(frame.payload);
       const observation = this.metrics.onFrame(frame, wireBytes);
       if (observation.stall && observation.intervalMs !== null) {
         if (observation.intervalMs > this.pendingStallMs) {
@@ -287,7 +288,8 @@ class Suite {
 
   private readonly overviewChart: MultiChart;
   private readonly log: EventLog;
-  private readonly live: LiveTextPanel;
+  /** One live text block per protocol, each rendered inside its own card. */
+  private readonly live = new Map<Protocol, LiveText>();
   private readonly onRunningChanged: (running: boolean) => void;
 
   private ticker: number | null = null;
@@ -300,12 +302,10 @@ class Suite {
   constructor(options: {
     grid: HTMLElement;
     overview: HTMLElement;
-    live: LiveTextPanel;
     log: EventLog;
     onRunningChanged: (running: boolean) => void;
   }) {
     this.log = options.log;
-    this.live = options.live;
     this.onRunningChanged = options.onRunningChanged;
 
     // The overview plots every protocol on one pair of axes. Series order is the
@@ -324,6 +324,10 @@ class Suite {
       const card = new ProtocolCard(protocol);
       this.cards.set(protocol, card);
       options.grid.append(card.root);
+
+      // The raw bytes belong beside the readings for the same stream, so each
+      // card owns the block that shows them.
+      this.live.set(protocol, new LiveText(card.liveSlot));
 
       // Every protocol plots only itself, so each line keeps its own colour and
       // the charts live inside the block they describe.
@@ -386,13 +390,13 @@ class Suite {
   renderLabels(): void {
     for (const [protocol, card] of this.cards) {
       card.renderLabels();
+      this.live.get(protocol)?.renderLabels();
       const label = t(`proto.${protocol}`);
       this.intervalCharts.get(protocol)?.setSeriesLabels([label]);
       this.throughputCharts.get(protocol)?.setSeriesLabels([label]);
       this.peaksCharts.get(protocol)?.setSeriesLabels([label]);
     }
     this.overviewChart.setSeriesLabels(PROTOCOLS.map((protocol) => t(`proto.${protocol}`)));
-    this.live.renderLabels();
   }
 
   /**
@@ -431,7 +435,7 @@ class Suite {
 
     for (const chart of this.allCharts()) chart.clear();
     for (const [, card] of this.cards) card.reset();
-    this.live.clear();
+    for (const live of this.live.values()) live.clear();
 
     this.runs.clear();
     this.startedAt = performance.now();
@@ -439,13 +443,14 @@ class Suite {
 
     for (const protocol of protocols) {
       const card = this.cards.get(protocol);
-      if (!card) continue;
+      const live = this.live.get(protocol);
+      if (!card || !live) continue;
       const run = new StreamRun({
         protocol,
         params,
         card,
         log: this.log,
-        live: this.live,
+        live,
         autoReconnect,
         deadlineMs: untilStopped ? 0 : this.startedAt + params.duration * 1000,
         onSettled: () => this.handleRunSettled(),
@@ -600,7 +605,6 @@ async function boot(): Promise<void> {
   const suite = new Suite({
     grid: requireElement('protocol-grid'),
     overview: requireElement('overview-chart'),
-    live: new LiveTextPanel(requireElement('live-grid')),
     log,
     onRunningChanged: (running) => {
       startButton.disabled = running;
