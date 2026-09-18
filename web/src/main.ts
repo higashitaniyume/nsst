@@ -1,10 +1,21 @@
 import { fetchConfig, fetchHealth, httpStreamURL, websocketURL } from './api.js';
 import { MultiChart } from './chart.js';
+import { ClientInfoBar } from './client-info.js';
+import {
+  buildCSV,
+  downloadCSV,
+  type ExportDetail,
+  type ExportInput,
+  type ExportMetaRow,
+  type ExportSection,
+  exportFilename,
+  mergeSections,
+} from './export.js';
 import { formatAxisMs, formatAxisRate } from './format.js';
 import { createHTTPStreamTransport } from './http-stream.js';
 import { applyStatic, onLangChange, t, toggleLang } from './i18n.js';
 import { LiveText } from './live-text.js';
-import { MetricsCollector } from './metrics.js';
+import { type FrameRecord, MetricsCollector } from './metrics.js';
 import { createSSETransport } from './sse.js';
 import type { CloseReason, Message, Transport, TransportCallbacks } from './transport.js';
 import type { ConfigResponse, ConnectionState, Protocol, StreamParams } from './types.js';
@@ -291,6 +302,7 @@ class Suite {
   /** One live text block per protocol, each rendered inside its own card. */
   private readonly live = new Map<Protocol, LiveText>();
   private readonly onRunningChanged: (running: boolean) => void;
+  private readonly onExportProtocol: (protocol: Protocol) => void;
 
   private ticker: number | null = null;
   private startedAt = 0;
@@ -304,9 +316,11 @@ class Suite {
     overview: HTMLElement;
     log: EventLog;
     onRunningChanged: (running: boolean) => void;
+    onExportProtocol: (protocol: Protocol) => void;
   }) {
     this.log = options.log;
     this.onRunningChanged = options.onRunningChanged;
+    this.onExportProtocol = options.onExportProtocol;
 
     // The overview plots every protocol on one pair of axes. Series order is the
     // canonical protocol order, which is the order tick() feeds values in.
@@ -321,7 +335,7 @@ class Suite {
     });
 
     for (const protocol of PROTOCOLS) {
-      const card = new ProtocolCard(protocol);
+      const card = new ProtocolCard(protocol, () => this.onExportProtocol(protocol));
       this.cards.set(protocol, card);
       options.grid.append(card.root);
 
@@ -384,6 +398,49 @@ class Suite {
 
   get isRunning(): boolean {
     return this.running;
+  }
+
+  /** One protocol's readings, shaped for the CSV export. */
+  exportSections(protocol: Protocol): ExportSection[] {
+    return this.cards.get(protocol)?.exportSections() ?? [];
+  }
+
+  /** The frames retained for one protocol, oldest first. */
+  frameRecords(protocol: Protocol): readonly FrameRecord[] {
+    return this.runs.get(protocol)?.metrics.frameRecords() ?? [];
+  }
+
+  /** How much of a protocol's run the retained frame log covers. */
+  frameLogStats(protocol: Protocol): { kept: number; total: number } {
+    const stats = this.runs.get(protocol)?.metrics.frameLogStats;
+    return { kept: stats?.kept ?? 0, total: stats?.total ?? 0 };
+  }
+
+  /**
+   * The protocols of the most recent run, in canonical order.
+   *
+   * A run only touches the protocols the user selected, so exporting the cards
+   * instead would mix a fresh run with the leftovers of an older one. Before the
+   * first run there is nothing to distinguish, so every card is offered.
+   */
+  reportProtocols(): Protocol[] {
+    if (this.runs.size === 0) return [...PROTOCOLS];
+    return PROTOCOLS.filter((protocol) => this.runs.has(protocol));
+  }
+
+  /** The parameters and state the export describes itself with. */
+  runSummary(): {
+    params: StreamParams;
+    expectedFrames: number;
+    untilStopped: boolean;
+    running: boolean;
+  } {
+    return {
+      params: { ...this.params },
+      expectedFrames: this.expectedFrames,
+      untilStopped: this.untilStopped,
+      running: this.running,
+    };
   }
 
   /** Re-applies translated labels on the cards and the charts. */
@@ -620,7 +677,10 @@ async function boot(): Promise<void> {
       cfgNotice.textContent = running ? t('cfg.locked') : t('cfg.ready');
       cfgNotice.className = running ? 'notice notice-locked' : 'notice';
     },
+    onExportProtocol: (protocol) => exportProtocol(protocol),
   });
+
+  const clientBar = new ClientInfoBar(requireElement('client-bar'));
 
   // The collapse panels hold no measurable width while closed, so remeasure the
   // charts once one is opened.
@@ -654,11 +714,138 @@ async function boot(): Promise<void> {
     refreshServerChip();
   }
 
+  // --- export -------------------------------------------------------------
+  /** The block above the table: what produced these numbers, and when. */
+  function exportMetaRows(protocols: readonly Protocol[]): ExportMetaRow[] {
+    const run = suite.runSummary();
+    const params = run.params;
+    const parameters = [
+      `${t('cfg.duration')} ${params.duration} ${t('unit.seconds')}`,
+      `${t('cfg.interval')} ${params.interval} ${t('unit.ms')}`,
+      `${t('cfg.payload')} ${params.payload_size} ${t('unit.bytes')}`,
+    ];
+    if (run.untilStopped) parameters.push(t('cfg.untilStopped'));
+
+    return [
+      {
+        label: t('export.meta.app'),
+        value: serverInfo.version ? `${t('app.title')} v${serverInfo.version}` : t('app.title'),
+      },
+      {
+        label: t('export.meta.generatedAt'),
+        value: new Date().toLocaleString(undefined, { hour12: false }),
+      },
+      ...clientBar.metaRows(),
+      { label: t('export.meta.parameters'), value: parameters.join(' · ') },
+      {
+        label: t('export.meta.expectedFrames'),
+        value: run.untilStopped ? t('unit.untilStopped') : String(run.expectedFrames),
+      },
+      { label: t('export.meta.runState'), value: run.running ? t('run.running') : t('run.stopped') },
+      { label: t('export.meta.frameDetail'), value: retentionLabel(protocols) },
+    ];
+  }
+
+  /**
+   * States how much of each run the frame log still holds, so a truncated detail
+   * table is visible in the file rather than being mistaken for the whole run.
+   */
+  function retentionLabel(protocols: readonly Protocol[]): string {
+    return protocols
+      .map((protocol) => {
+        const { kept, total } = suite.frameLogStats(protocol);
+        return `${t(`proto.${protocol}`)} ${kept}/${total}`;
+      })
+      .join(' · ');
+  }
+
+  /** The frame-by-frame table appended to every export. */
+  function frameDetail(protocols: readonly Protocol[]): ExportDetail {
+    const rows: string[][] = [];
+    for (const protocol of protocols) {
+      const label = t(`proto.${protocol}`);
+      for (const record of suite.frameRecords(protocol)) {
+        rows.push([
+          label,
+          String(record.connection),
+          String(record.sequence),
+          record.arrivalMs.toFixed(3),
+          record.intervalMs === null ? '' : record.intervalMs.toFixed(3),
+          record.serverIntervalMs === null ? '' : String(record.serverIntervalMs),
+          String(record.serverTimeMs),
+          String(record.payloadSize),
+          String(record.wireBytes),
+          String(record.missing),
+          record.integrityError ? t('export.failed') : t('export.ok'),
+          record.stall ? t('export.yes') : t('export.no'),
+        ]);
+      }
+    }
+
+    return {
+      title: t('export.frameDetail.title'),
+      columns: [
+        t('export.frame.protocol'),
+        t('export.frame.connection'),
+        t('export.frame.sequence'),
+        t('export.frame.arrival'),
+        t('export.frame.interval'),
+        t('export.frame.serverInterval'),
+        t('export.frame.serverTime'),
+        t('export.frame.payloadBytes'),
+        t('export.frame.wireBytes'),
+        t('export.frame.missing'),
+        t('export.frame.integrity'),
+        t('export.frame.stall'),
+      ],
+      rows,
+    };
+  }
+
+  /** The document behind one export: one value column per protocol given. */
+  function exportDocument(protocols: readonly Protocol[]): ExportInput {
+    return {
+      groupHeading: t('export.column.group'),
+      metricHeading: t('export.column.metric'),
+      metaGroup: t('export.group.meta'),
+      meta: exportMetaRows(protocols),
+      columns: protocols.map((protocol) => t(`proto.${protocol}`)),
+      sections: mergeSections(
+        protocols.map((protocol) => suite.exportSections(protocol)),
+        t('value.na'),
+      ),
+      detail: frameDetail(protocols),
+    };
+  }
+
+  function runExport(kind: string, protocols: readonly Protocol[]): void {
+    if (protocols.length === 0) return;
+    const filename = exportFilename(kind);
+    downloadCSV(filename, buildCSV(exportDocument(protocols)));
+    log.add(
+      'success',
+      t('log.exported', {
+        file: filename,
+        protocols: protocols.map((protocol) => t(`proto.${protocol}`)).join(', '),
+      }),
+    );
+  }
+
+  function exportProtocol(protocol: Protocol): void {
+    runExport(protocol, [protocol]);
+  }
+
+  /** The top-of-page button: every protocol of the last run, side by side. */
+  function exportAll(): void {
+    runExport('all', suite.reportProtocols());
+  }
+
   // --- language -----------------------------------------------------------
   const langButton = requireElement<HTMLButtonElement>('lang-toggle');
   langButton.addEventListener('click', () => toggleLang());
   onLangChange(() => {
     suite.renderLabels();
+    clientBar.renderLabels();
     refreshServerChip();
     setText(runState, suite.isRunning ? t('run.running') : t('run.stopped'));
     setText(runNote, t(suite.isRunning ? 'run.noteAuto' : 'run.noteStopped'));
@@ -695,6 +882,9 @@ async function boot(): Promise<void> {
       }),
     );
     setText(runNote, untilStopped ? t('run.noteAuto') : t('run.noteManual'));
+    // Re-read the connection facts: a proxy in front of the server can present a
+    // different address on the next run, and the export follows the panel.
+    void clientBar.load();
     suite.start(protocols, params, untilStopped, autoReconnectInput.checked);
   });
 
@@ -705,6 +895,7 @@ async function boot(): Promise<void> {
   });
 
   requireElement('log-clear').addEventListener('click', () => log.clear());
+  requireElement('export-all').addEventListener('click', () => exportAll());
 
   // --- initial load -------------------------------------------------------
   setText(runState, t('run.stopped'));
@@ -712,6 +903,10 @@ async function boot(): Promise<void> {
   refreshServerChip();
   await pollHealth();
   window.setInterval(() => void pollHealth(), 10000);
+
+  // Loads on its own schedule: the panel shows the browser-side facts even when
+  // the server does not answer, so nothing here is allowed to block the run.
+  await clientBar.load();
 
   try {
     const config: ConfigResponse = await fetchConfig();

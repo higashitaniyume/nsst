@@ -77,6 +77,28 @@ export interface HealthResponse {
   uptime_seconds: number;
 }
 
+/** Mirrors internal/api.clientResponse, as returned by /api/client. */
+export interface ClientResponse {
+  /** Address to display; `ip_source` names where it came from. */
+  ip: string;
+  ip_source: string;
+  /** True when the address came from a proxy header rather than the socket. */
+  proxy: boolean;
+  remote_addr: string;
+  /** X-Forwarded-For hops, oldest first; absent when the header was not sent. */
+  forwarded_for?: string[];
+  user_agent: string;
+  accept_language: string;
+  referer?: string;
+  host: string;
+  /** "HTTP/1.1" or "HTTP/2.0". */
+  proto: string;
+  tls: boolean;
+  tls_version?: string;
+  /** Server clock in Unix milliseconds, for the clock skew reading. */
+  server_time: number;
+}
+
 /** Mirrors internal/metrics.Snapshot, as returned by /api/metrics. */
 export interface MetricsResponse {
   active_streams: number;

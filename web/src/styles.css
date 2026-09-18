@@ -232,6 +232,68 @@ body {
   margin: 0;
 }
 
+/* --------------------------------------------------------- client info bar */
+
+/* Who the server and the browser say is looking at the console. It sits at the
+   top of the column because it describes the session the readings belong to, and
+   it collapses to its heading so it never takes space it is not needed in. */
+.client-bar .client-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(212px, 1fr));
+  gap: 8px 12px;
+  margin-top: 4px;
+}
+
+.client-field {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-inset);
+}
+
+.client-label {
+  flex: none;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.client-value {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.client-note {
+  margin: 10px 0 0;
+  max-width: 108ch;
+}
+
+.client-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  color: var(--warn);
+}
+
+.client-bar.client-collapsed {
+  padding: 10px 16px;
+}
+
+.client-bar.client-collapsed .client-fields,
+.client-bar.client-collapsed .client-note {
+  display: none;
+}
+
 /* ------------------------------------------------------------------ runbar */
 
 .runbar {
@@ -300,6 +362,13 @@ body {
   margin: 0;
   font-size: 15px;
   font-weight: 650;
+}
+
+.proto-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
 }
 
 .proto-endpoint {

@@ -1,3 +1,4 @@
+import type { ExportSection } from './export.js';
 import { formatBytes, formatClock, formatMilliseconds, formatRate } from './format.js';
 import { applyStatic, t } from './i18n.js';
 import { setClass, setText } from './ui.js';
@@ -45,6 +46,17 @@ const TIMING_ROWS = [
 type RowKey = (typeof TRAFFIC_ROWS)[number] | (typeof TIMING_ROWS)[number];
 
 type CellMap = Map<RowKey, HTMLTableCellElement>;
+
+/**
+ * A built table plus what the exporter needs from it: the title key (so the
+ * label follows the current language) and the value cells in display order.
+ */
+interface BuiltTable {
+  block: HTMLElement;
+  cells: CellMap;
+  titleKey: string;
+  values: { key: RowKey; cell: HTMLElement }[];
+}
 
 // ------------------------------------------------------------------ verdicts
 
@@ -118,7 +130,7 @@ export function verdictFor(
 
 // -------------------------------------------------------------- card builders
 
-function buildTable(titleKey: string, rows: readonly RowKey[]): { block: HTMLElement; cells: CellMap } {
+function buildTable(titleKey: string, rows: readonly RowKey[]): BuiltTable {
   const block = document.createElement('div');
   block.className = 'metrics-block';
 
@@ -132,6 +144,7 @@ function buildTable(titleKey: string, rows: readonly RowKey[]): { block: HTMLEle
 
   const tbody = document.createElement('tbody');
   const cells: CellMap = new Map();
+  const values: BuiltTable['values'] = [];
 
   for (const key of rows) {
     const tr = document.createElement('tr');
@@ -148,11 +161,12 @@ function buildTable(titleKey: string, rows: readonly RowKey[]): { block: HTMLEle
     tr.append(th, td);
     tbody.append(tr);
     cells.set(key, td);
+    values.push({ key, cell: td });
   }
 
   table.append(tbody);
   block.append(title, table);
-  return { block, cells };
+  return { block, cells, titleKey, values };
 }
 
 /**
@@ -217,6 +231,8 @@ export class ProtocolCard {
   private readonly cells: CellMap;
   private readonly statePill: HTMLElement;
   private readonly verdict: HTMLElement;
+  /** The two metric tables, kept for the CSV export. */
+  private readonly tables: BuiltTable[];
 
   /** Kept so a language switch can redraw text that is not in the markup. */
   private last: {
@@ -227,7 +243,11 @@ export class ProtocolCard {
     running: boolean;
   } | null = null;
 
-  constructor(readonly protocol: Protocol) {
+  constructor(
+    readonly protocol: Protocol,
+    /** Invoked by the card's own export button. */
+    onExport: () => void,
+  ) {
     const root = document.createElement('article');
     root.className = 'panel proto-card';
     root.dataset.proto = protocol;
@@ -244,7 +264,19 @@ export class ProtocolCard {
     pill.className = 'pill state-idle';
     pill.textContent = t('state.idle');
 
-    head.append(name, pill);
+    const exportButton = document.createElement('button');
+    exportButton.type = 'button';
+    exportButton.className = 'button ghost small';
+    exportButton.dataset.i18n = 'export.protocol';
+    exportButton.dataset.i18nTitle = 'export.protocolTitle';
+    exportButton.textContent = t('export.protocol');
+    exportButton.addEventListener('click', onExport);
+
+    const actions = document.createElement('div');
+    actions.className = 'proto-head-actions';
+    actions.append(pill, exportButton);
+
+    head.append(name, actions);
 
     const endpoint = document.createElement('code');
     endpoint.className = 'proto-endpoint';
@@ -295,7 +327,31 @@ export class ProtocolCard {
     this.liveSlot = live;
     this.statePill = pill;
     this.verdict = verdict;
+    this.tables = [traffic, timing];
     this.cells = new Map([...traffic.cells, ...timing.cells]);
+  }
+
+  /**
+   * The card's readings as exportable rows: the two tables, then the verdict.
+   *
+   * Values are the text on screen, so the file says exactly what the tables say,
+   * and every card produces the same sections in the same order — which is what
+   * lets the combined export line them up side by side.
+   */
+  exportSections(): ExportSection[] {
+    const sections: ExportSection[] = this.tables.map((table) => ({
+      label: t(table.titleKey),
+      rows: table.values.map((row) => ({
+        label: t(`row.${row.key}`),
+        values: [row.cell.textContent ?? ''],
+      })),
+    }));
+
+    sections.push({
+      label: t('export.group.verdict'),
+      rows: [{ label: t('export.verdict'), values: [this.verdict.textContent ?? ''] }],
+    });
+    return sections;
   }
 
   /**

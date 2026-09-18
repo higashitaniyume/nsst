@@ -23,6 +23,13 @@
           </div>
         </div>
         <div class="topbar-actions">
+          <button
+            type="button"
+            class="button small"
+            id="export-all"
+            data-i18n="export.all"
+            data-i18n-title="export.allTitle"
+          ></button>
           <span class="server-chip offline" id="server-chip"></span>
           <button
             type="button"
@@ -35,6 +42,18 @@
       </header>
 
       <main class="layout">
+        <!-- Who is looking at the console, according to the server and the
+             browser. Rendered by client-info.ts and collapsible; the choice is
+             remembered in localStorage. -->
+        <section class="panel client-bar" id="client-bar">
+          <div class="panel-head">
+            <h2 class="section-title" data-i18n="client.title"></h2>
+            <button type="button" class="button ghost small" id="client-toggle"></button>
+          </div>
+          <div class="client-fields" id="client-fields"></div>
+          <p class="hint client-note" data-i18n="client.note"></p>
+        </section>
+
         <!-- All three protocols' frame intervals on one pair of axes, so a
              difference between them is visible without scrolling. Wired up by
              main.ts; this block carries no table. -->

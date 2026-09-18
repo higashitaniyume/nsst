@@ -23,6 +23,48 @@ export interface TickResult {
 }
 
 /**
+ * One frame exactly as it arrived, kept for the CSV export.
+ *
+ * The summary tables say how the run behaved on average; this is the raw series
+ * behind them, so a single late frame can be found and plotted instead of only
+ * being counted.
+ */
+export interface FrameRecord {
+  /** 1-based connection attempt within the run; the sequence restarts at 1 after a reconnect. */
+  connection: number;
+  sequence: number;
+  /** Milliseconds since the run started. */
+  arrivalMs: number;
+  /** Time since the previous frame of the same connection; null for its first frame. */
+  intervalMs: number | null;
+  /** Change in the server's own timestamp since the previous frame; null for the first. */
+  serverIntervalMs: number | null;
+  /** True when {@link intervalMs} exceeded the stall threshold. */
+  stall: boolean;
+  /** Server wall clock when the frame was built, Unix milliseconds. */
+  serverTimeMs: number;
+  /** Payload bytes the server says it wrote. */
+  payloadSize: number;
+  /** Application bytes the frame actually occupied on the wire. */
+  wireBytes: number;
+  /** Frames skipped before this one, derived from the sequence number. */
+  missing: number;
+  /** The payload length did not match `payload_size`. */
+  integrityError: boolean;
+}
+
+/**
+ * How many individual frames are kept per protocol for the export.
+ *
+ * A soak test can run for hours — at a 10 ms interval that is 360,000 frames an
+ * hour — so the log is a ring of the most recent frames rather than an unbounded
+ * list. 50,000 frames is about 33 minutes at 100 ms, 5.5 hours at 1 s, and it
+ * keeps the collector under a few megabytes. When frames have been dropped the
+ * export says so; nothing is ever silently truncated.
+ */
+export const FRAME_LOG_LIMIT = 50_000;
+
+/**
  * A stall threshold derived from the requested interval.
  *
  * A gap is only interesting when it is clearly larger than the pacing the server
@@ -85,6 +127,13 @@ export class MetricsCollector {
   private tickIntervalCount = 0;
   private tickBytes = 0;
 
+  /** Ring of the most recent frames; see {@link FRAME_LOG_LIMIT}. */
+  private frameLog: FrameRecord[] = [];
+  /** Slot the next frame overwrites once the ring is full. */
+  private frameLogCursor = 0;
+  private frameLogDropped = 0;
+  private lastServerTime: number | null = null;
+
   constructor(intervalMs: number) {
     this.gapThresholdMs = stallThresholdMs(intervalMs);
     this.lastTick = performance.now();
@@ -129,6 +178,11 @@ export class MetricsCollector {
     this.tickIntervalSum = 0;
     this.tickIntervalCount = 0;
     this.tickBytes = 0;
+
+    this.frameLog = [];
+    this.frameLogCursor = 0;
+    this.frameLogDropped = 0;
+    this.lastServerTime = null;
 
     this.state = 'connecting';
     this.detail = '';
@@ -197,24 +251,39 @@ export class MetricsCollector {
     // client can verify that nothing was truncated or re-encoded in transit.
     // payload_size counts UTF-8 bytes rather than JavaScript characters, so a
     // multi-byte document is measured in the same units the server used.
+    let integrityError = false;
     if (frame.payload_size > 0) {
       if (utf8Length(frame.payload ?? '') !== frame.payload_size) {
         this.integrityErrors += 1;
+        integrityError = true;
       }
     } else if (frame.payload !== undefined && frame.payload !== '') {
       this.integrityErrors += 1;
+      integrityError = true;
     }
 
     // Sequence integrity, tracked within a single connection only.
+    let missing = 0;
     if (this.lastSequence !== null) {
       if (frame.sequence > this.lastSequence + 1) {
+        missing = frame.sequence - this.lastSequence - 1;
         this.sequenceGaps += 1;
-        this.missingFrames += frame.sequence - this.lastSequence - 1;
+        this.missingFrames += missing;
       } else if (frame.sequence <= this.lastSequence) {
         this.outOfOrderFrames += 1;
       }
     }
     this.lastSequence = frame.sequence;
+
+    // Comparing the server's own clock with the arrival times separates "the
+    // server did not produce the frame on time" from "the frame was delayed on
+    // the way here": only the former moves server_time by more than the interval.
+    let serverIntervalMs: number | null = null;
+    if (this.lastServerTime !== null) {
+      const serverDelta = frame.server_time - this.lastServerTime;
+      if (serverDelta >= 0) serverIntervalMs = serverDelta;
+    }
+    this.lastServerTime = frame.server_time;
 
     this.frames += 1;
     this.bytes += wireBytes;
@@ -225,7 +294,49 @@ export class MetricsCollector {
     this.window.push({ t: arrival, bytes: wireBytes });
     this.pruneWindow(arrival);
 
+    this.recordFrame({
+      connection: this.reconnects + 1,
+      sequence: frame.sequence,
+      arrivalMs: arrival,
+      intervalMs,
+      serverIntervalMs,
+      stall,
+      serverTimeMs: frame.server_time,
+      payloadSize: frame.payload_size,
+      wireBytes,
+      missing,
+      integrityError,
+    });
+
     return { intervalMs, stall, arrivalMs: arrival };
+  }
+
+  /** Appends one frame to the ring, dropping the oldest when it is full. */
+  private recordFrame(record: FrameRecord): void {
+    if (this.frameLog.length < FRAME_LOG_LIMIT) {
+      this.frameLog.push(record);
+      return;
+    }
+    this.frameLog[this.frameLogCursor] = record;
+    this.frameLogCursor = (this.frameLogCursor + 1) % FRAME_LOG_LIMIT;
+    this.frameLogDropped += 1;
+  }
+
+  /** The retained frames, oldest first. */
+  frameRecords(): readonly FrameRecord[] {
+    if (this.frameLogDropped === 0) return this.frameLog;
+    // The ring wraps: the oldest entry sits at the slot about to be overwritten.
+    return this.frameLog
+      .slice(this.frameLogCursor)
+      .concat(this.frameLog.slice(0, this.frameLogCursor));
+  }
+
+  /**
+   * How much of the run the retained frame log covers, so an export can say
+   * whether it is complete instead of quietly shipping a window.
+   */
+  get frameLogStats(): { kept: number; dropped: number; total: number } {
+    return { kept: this.frameLog.length, dropped: this.frameLogDropped, total: this.frames };
   }
 
   /**
@@ -239,6 +350,8 @@ export class MetricsCollector {
     this.lastSequence = null;
     this.lastArrival = null;
     this.lastInterval = null;
+    // The new connection has its own first frame: no interval to report yet.
+    this.lastServerTime = null;
   }
 
   /** Produces one chart point and resets the per tick accumulators. */

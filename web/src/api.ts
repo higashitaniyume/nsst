@@ -1,4 +1,5 @@
 import type {
+  ClientResponse,
   ConfigResponse,
   HealthResponse,
   InfoResponse,
@@ -39,6 +40,11 @@ export function fetchConfig(signal?: AbortSignal): Promise<ConfigResponse> {
 
 export function fetchMetrics(signal?: AbortSignal): Promise<MetricsResponse> {
   return getJSON<MetricsResponse>('/api/metrics', signal);
+}
+
+/** What this server can see about the client asking the question. */
+export function fetchClient(signal?: AbortSignal): Promise<ClientResponse> {
+  return getJSON<ClientResponse>('/api/client', signal);
 }
 
 /** Path of the stream endpoint for a protocol. */
