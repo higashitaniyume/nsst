@@ -114,6 +114,8 @@ func TestConfig(t *testing.T) {
 	defer stack.Close()
 
 	var got struct {
+		Name      string   `json:"name"`
+		Version   string   `json:"version"`
 		Protocols []string `json:"protocols"`
 		Limits    struct {
 			MaxDuration          int64 `json:"max_duration"`
@@ -130,6 +132,16 @@ func TestConfig(t *testing.T) {
 		} `json:"defaults"`
 	}
 	getJSON(t, stack, "/api/config", &got)
+
+	// The page greets the operator with "connected to <name> v<version>" from
+	// this payload, so both fields have to be present here and not only on
+	// /api/info.
+	if got.Name != "StreamTest" {
+		t.Errorf("name = %q, want StreamTest", got.Name)
+	}
+	if got.Version == "" {
+		t.Error("version must not be empty")
+	}
 
 	if got.Limits.MaxDuration != 5 {
 		t.Errorf("max_duration = %d, want 5", got.Limits.MaxDuration)

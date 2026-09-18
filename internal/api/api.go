@@ -125,6 +125,8 @@ type infoResponse struct {
 }
 
 type configResponse struct {
+	Name      string            `json:"name"`
+	Version   string            `json:"version"`
 	Protocols []string          `json:"protocols"`
 	Endpoints map[string]string `json:"endpoints"`
 	Limits    limitsView        `json:"limits"`
@@ -156,6 +158,8 @@ func (a *API) handleInfo(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, configResponse{
+		Name:      a.opts.Name,
+		Version:   a.opts.Version,
 		Protocols: Protocols,
 		Endpoints: endpoints(),
 		Limits:    a.limitsView(),
