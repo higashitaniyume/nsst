@@ -2,8 +2,10 @@ package protocol
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"unicode/utf8"
 )
@@ -47,6 +49,11 @@ func isASCII(b []byte) bool {
 // LoadDocument replaces the embedded payload document with the contents of path.
 // An empty or blank path keeps the embedded document and reports no error.
 //
+// A path that does not exist yet is seeded with the embedded document, creating
+// any missing parent directories, and then loaded. That way a fresh checkout or
+// a new deployment starts with a working, editable file at the configured path
+// rather than failing, and later runs pick up whatever edits were made to it.
+//
 // The document has to be valid UTF-8 and must not be blank: frames are cut on
 // rune boundaries and the client verifies that each one carried exactly
 // payload_size bytes, so a document that cannot be cut cleanly, or that is
@@ -58,12 +65,22 @@ func LoadDocument(path string) error {
 	}
 
 	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		// The file is not there yet: create it from the embedded document so
+		// this run, and every run after it, has something to read and edit.
+		if err := seedDocument(path); err != nil {
+			return err
+		}
+		info, err = os.Stat(path)
+	}
 	if err != nil {
 		return fmt.Errorf("payload document: %w", err)
 	}
 	if info.IsDir() {
 		// Docker creates a directory when a bind mount's source file does not
-		// exist, so this is a common and otherwise baffling failure.
+		// exist, so this is a common and otherwise baffling failure. A real
+		// directory is not something we can seed a file over, so it stays an
+		// error rather than being silently replaced.
 		return fmt.Errorf("payload document %s is a directory; a bind mount whose source file is missing creates one", path)
 	}
 
@@ -80,6 +97,21 @@ func LoadDocument(path string) error {
 
 	payloadDocument = data
 	payloadASCII = isASCII(data)
+	return nil
+}
+
+// seedDocument writes the embedded document to path, creating any missing parent
+// directories. It is called when path does not exist yet so that a run always
+// finds a usable, editable file where the operator pointed PAYLOAD_FILE.
+func seedDocument(path string) error {
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("payload document: creating directory for %s: %w", path, err)
+		}
+	}
+	if err := os.WriteFile(path, []byte(PayloadText), 0o644); err != nil {
+		return fmt.Errorf("payload document: seeding %s: %w", path, err)
+	}
 	return nil
 }
 

@@ -270,6 +270,43 @@ func TestLoadDocumentReadsAFile(t *testing.T) {
 	}
 }
 
+func TestLoadDocumentSeedsAMissingFile(t *testing.T) {
+	// A path two levels deep so the parent directories must be created too.
+	path := filepath.Join(t.TempDir(), "sub", "dir", "payload.txt")
+
+	t.Cleanup(func() {
+		payloadDocument = []byte(PayloadText)
+		payloadASCII = isASCII(payloadDocument)
+	})
+	if err := LoadDocument(path); err != nil {
+		t.Fatalf("LoadDocument: %v", err)
+	}
+
+	// The file now exists on disk, seeded with the embedded document.
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("seeded file was not created: %v", err)
+	}
+	if string(written) != PayloadText {
+		t.Fatal("seeded file does not match the embedded document")
+	}
+	if got := PayloadDocument(); got != PayloadText {
+		t.Fatal("loaded document does not match the embedded document")
+	}
+
+	// A second run must read the (possibly edited) file rather than reseed it.
+	edited := "编辑过的正文。\n\n第二段。"
+	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := LoadDocument(path); err != nil {
+		t.Fatalf("LoadDocument (second run): %v", err)
+	}
+	if got := PayloadDocument(); got != edited {
+		t.Fatalf("second run did not read the edited file: got %q", got)
+	}
+}
+
 func TestLoadDocumentWithBlankPathKeepsTheEmbeddedDocument(t *testing.T) {
 	for _, path := range []string{"", "   "} {
 		if err := LoadDocument(path); err != nil {
@@ -303,7 +340,6 @@ func TestLoadDocumentRejectsUnusableFiles(t *testing.T) {
 		name string
 		path string
 	}{
-		{"missing file", filepath.Join(dir, "nope.txt")},
 		{"directory", dir},
 		{"invalid UTF-8", invalid},
 		{"blank", blank},
