@@ -468,6 +468,60 @@ body {
   margin-top: 4px;
 }
 
+/* ---------------------------------------------------------------- live data */
+
+/* The bytes the server is sending right now, one column per protocol. This is
+   the raw stream rather than a reading about it, so it is plain monospaced text
+   with nothing that could hide a stall. */
+.live-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.live-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-inset);
+}
+
+.live-column[data-proto='http-stream'] {
+  border-top-color: var(--http);
+}
+
+.live-column[data-proto='sse'] {
+  border-top-color: var(--sse);
+}
+
+.live-column[data-proto='websocket'] {
+  border-top-color: var(--ws);
+}
+
+.live-head {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.live-body {
+  height: 152px;
+  margin: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ------------------------------------------------------------------ charts */
 
 /* A card is two columns: that protocol's readings on the left, its charts on the
@@ -745,6 +799,12 @@ details.mini-chart:not([open]) .chart {
    charts drop underneath the readings instead of squeezing. */
 @media (max-width: 980px) {
   .proto-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Three columns of prose become unreadably narrow; one per row keeps the
+     stream readable, which is the whole point of the panel. */
+  .live-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }

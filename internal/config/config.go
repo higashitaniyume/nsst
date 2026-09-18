@@ -34,6 +34,11 @@ type Config struct {
 	LogFormat        string
 	ShutdownTimeout  time.Duration
 	Limits           stream.Limits
+
+	// PayloadFile is the path of a file to use as the streaming payload
+	// document instead of the embedded one. Empty means "use the embedded
+	// document"; cmd/server turns it into a call to protocol.LoadDocument.
+	PayloadFile string
 }
 
 // Addr is the listen address for net/http.
@@ -57,6 +62,7 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		LogLevel:         l.logLevel("LOG_LEVEL", slog.LevelInfo),
 		LogFormat:        l.enum("LOG_FORMAT", "text", "text", "json"),
 		ShutdownTimeout:  time.Duration(l.intVal("SHUTDOWN_TIMEOUT", 15, 1, 600)) * time.Second,
+		PayloadFile:      l.str("PAYLOAD_FILE", ""),
 	}
 
 	lim := stream.DefaultLimits()

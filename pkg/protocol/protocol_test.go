@@ -24,7 +24,10 @@ func TestEncoderMatchesJSONEncoding(t *testing.T) {
 			for _, seq := range []uint64{1, 2, 42, 1 << 40} {
 				const serverTime = int64(1730000000123)
 
-				got := enc.Append(nil, seq, serverTime)
+				got, consumed := enc.Append(nil, seq, serverTime, 0)
+				if consumed != tc.payloadSize {
+					t.Fatalf("consumed = %d, want %d", consumed, tc.payloadSize)
+				}
 
 				// The hand rolled encoder must produce exactly what encoding/json
 				// would produce for the equivalent Frame.
@@ -32,7 +35,7 @@ func TestEncoderMatchesJSONEncoding(t *testing.T) {
 					Sequence:    seq,
 					ServerTime:  serverTime,
 					PayloadSize: tc.payloadSize,
-					Payload:     strings.Repeat("a", tc.payloadSize),
+					Payload:     documentChunkAt(0, tc.payloadSize),
 				})
 				if err != nil {
 					t.Fatalf("Encode: %v", err)
@@ -67,7 +70,8 @@ func TestEncoderMatchesJSONEncoding(t *testing.T) {
 
 func TestEncoderMetadataOnlyShape(t *testing.T) {
 	// payload_size=0 must produce exactly the documented three field frame.
-	got := string(NewEncoder(0).Append(nil, 1, 1730000000123))
+	raw, _ := NewEncoder(0).Append(nil, 1, 1730000000123, 0)
+	got := string(raw)
 	want := `{"sequence":1,"server_time":1730000000123,"payload_size":0}`
 	if got != want {
 		t.Fatalf("frame = %s, want %s", got, want)
@@ -77,10 +81,10 @@ func TestEncoderMetadataOnlyShape(t *testing.T) {
 func TestAppendReusesBuffer(t *testing.T) {
 	enc := NewEncoder(8)
 	buf := make([]byte, 0, 256)
-	first := enc.Append(buf, 1, 1000)
+	first, _ := enc.Append(buf, 1, 1000, 0)
 
 	// Appending into the same backing array must not grow it.
-	second := enc.Append(first[:0], 2, 2000)
+	second, _ := enc.Append(first[:0], 2, 2000, 0)
 	if cap(second) != cap(first) {
 		t.Fatalf("buffer grew: cap %d -> %d", cap(first), cap(second))
 	}

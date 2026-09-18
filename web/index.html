@@ -52,6 +52,14 @@
           <button type="button" class="button danger" id="stop-button" data-i18n="run.stop" disabled></button>
         </section>
 
+        <!-- The bytes the server actually sent, appended in arrival order.
+             Filled in by live-text.ts; this block carries no metrics of its own. -->
+        <section class="panel live">
+          <h2 class="section-title" data-i18n="live.title"></h2>
+          <p class="hint" data-i18n="live.hint"></p>
+          <div class="live-grid" id="live-grid"></div>
+        </section>
+
         <!-- One card per protocol, each with its own tables and charts, generated
              by views.ts and stacked top to bottom. -->
         <section class="protocol-grid" id="protocol-grid"></section>
@@ -107,7 +115,7 @@
               <div class="control-label" data-i18n="cfg.payload"></div>
               <div class="choices" id="cfg-payload">
                 <button type="button" class="chip" data-value="0">0 B</button>
-                <button type="button" class="chip" data-value="64">64 B</button>
+                <button type="button" class="chip" data-value="80">80 B</button>
                 <button type="button" class="chip" data-value="1024">1024 B</button>
                 <button type="button" class="chip" data-value="65536">65536 B</button>
                 <button type="button" class="chip" data-custom data-i18n="cfg.custom"></button>

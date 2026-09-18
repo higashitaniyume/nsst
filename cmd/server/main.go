@@ -21,6 +21,7 @@ import (
 	"github.com/nsst/streamtest/internal/metrics"
 	"github.com/nsst/streamtest/internal/stream"
 	"github.com/nsst/streamtest/internal/webui"
+	"github.com/nsst/streamtest/pkg/protocol"
 )
 
 // closeTimeout bounds the final socket teardown after streams have been drained.
@@ -41,6 +42,13 @@ func run() error {
 	}
 	logger := newLogger(cfg)
 	slog.SetDefault(logger)
+
+	// The payload document is process-wide and is swapped in before the server
+	// starts listening, so streams can read it without a lock. A broken file is
+	// a startup failure rather than a surprise in the middle of a test.
+	if err := protocol.LoadDocument(cfg.PayloadFile); err != nil {
+		return err
+	}
 
 	counters := metrics.New()
 	manager := stream.NewManager(cfg.Limits, counters)
@@ -87,6 +95,8 @@ func run() error {
 		"write_timeout", cfg.Limits.WriteTimeout.String(),
 		"shutdown_timeout", cfg.ShutdownTimeout.String(),
 		"cors_allow_origins", cfg.CORSAllowOrigins,
+		"payload_document_bytes", protocol.PayloadDocumentSize(),
+		"payload_file", cfg.PayloadFile,
 	)
 
 	serveErr := make(chan error, 1)

@@ -3,6 +3,7 @@ import { MultiChart } from './chart.js';
 import { formatAxisMs, formatAxisRate } from './format.js';
 import { createHTTPStreamTransport } from './http-stream.js';
 import { applyStatic, onLangChange, t, toggleLang } from './i18n.js';
+import { LiveTextPanel } from './live-text.js';
 import { MetricsCollector } from './metrics.js';
 import { createSSETransport } from './sse.js';
 import type { CloseReason, Message, Transport, TransportCallbacks } from './transport.js';
@@ -56,6 +57,7 @@ class StreamRun {
   private readonly autoReconnect: boolean;
   private readonly deadlineMs: number;
   private readonly onSettled: () => void;
+  private readonly live: LiveTextPanel;
 
   private transport: Transport | null = null;
   private deadlineTimer: number | null = null;
@@ -69,6 +71,7 @@ class StreamRun {
     params: StreamParams;
     card: ProtocolCard;
     log: EventLog;
+    live: LiveTextPanel;
     autoReconnect: boolean;
     deadlineMs: number;
     onSettled: () => void;
@@ -77,6 +80,7 @@ class StreamRun {
     this.params = options.params;
     this.card = options.card;
     this.log = options.log;
+    this.live = options.live;
     this.autoReconnect = options.autoReconnect;
     this.deadlineMs = options.deadlineMs;
     this.onSettled = options.onSettled;
@@ -101,6 +105,9 @@ class StreamRun {
     },
     onFrame: (frame, wireBytes) => {
       if (this.finished) return;
+      // The panel shows the payload exactly as it was decoded, in arrival order;
+      // a stalled stream is then visible as text that stops moving.
+      if (frame.payload) this.live.append(this.protocol, frame.payload);
       const observation = this.metrics.onFrame(frame, wireBytes);
       if (observation.stall && observation.intervalMs !== null) {
         if (observation.intervalMs > this.pendingStallMs) {
@@ -280,11 +287,12 @@ class Suite {
 
   private readonly overviewChart: MultiChart;
   private readonly log: EventLog;
+  private readonly live: LiveTextPanel;
   private readonly onRunningChanged: (running: boolean) => void;
 
   private ticker: number | null = null;
   private startedAt = 0;
-  private params: StreamParams = { duration: 60, interval: 100, payload_size: 4096 };
+  private params: StreamParams = { duration: 60, interval: 100, payload_size: 80 };
   private expectedFrames = 0;
   private untilStopped = true;
   private running = false;
@@ -292,10 +300,12 @@ class Suite {
   constructor(options: {
     grid: HTMLElement;
     overview: HTMLElement;
+    live: LiveTextPanel;
     log: EventLog;
     onRunningChanged: (running: boolean) => void;
   }) {
     this.log = options.log;
+    this.live = options.live;
     this.onRunningChanged = options.onRunningChanged;
 
     // The overview plots every protocol on one pair of axes. Series order is the
@@ -382,6 +392,7 @@ class Suite {
       this.peaksCharts.get(protocol)?.setSeriesLabels([label]);
     }
     this.overviewChart.setSeriesLabels(PROTOCOLS.map((protocol) => t(`proto.${protocol}`)));
+    this.live.renderLabels();
   }
 
   /**
@@ -420,6 +431,7 @@ class Suite {
 
     for (const chart of this.allCharts()) chart.clear();
     for (const [, card] of this.cards) card.reset();
+    this.live.clear();
 
     this.runs.clear();
     this.startedAt = performance.now();
@@ -433,6 +445,7 @@ class Suite {
         params,
         card,
         log: this.log,
+        live: this.live,
         autoReconnect,
         deadlineMs: untilStopped ? 0 : this.startedAt + params.duration * 1000,
         onSettled: () => this.handleRunSettled(),
@@ -587,6 +600,7 @@ async function boot(): Promise<void> {
   const suite = new Suite({
     grid: requireElement('protocol-grid'),
     overview: requireElement('overview-chart'),
+    live: new LiveTextPanel(requireElement('live-grid')),
     log,
     onRunningChanged: (running) => {
       startButton.disabled = running;

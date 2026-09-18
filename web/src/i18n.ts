@@ -85,7 +85,7 @@ const en: Dict = {
   'cfg.protocols': 'Protocols',
   'cfg.duration': 'Duration',
   'cfg.interval': 'Interval',
-  'cfg.payload': 'Payload',
+  'cfg.payload': 'Text per frame',
   'cfg.custom': 'Custom',
   'cfg.untilStopped': 'Run until stopped',
   'cfg.untilStoppedHint': 'Ignore the duration above and keep streaming until you press stop.',
@@ -99,6 +99,11 @@ const en: Dict = {
   'unit.minutes': 'min',
   'unit.bytes': 'B',
   'unit.untilStopped': 'until stopped',
+
+  'live.title': 'Live data',
+  'live.hint':
+    'The bytes the server actually sent, appended in the order they arrived. When the text stops moving the stream has stalled. Only the most recent stretch is kept.',
+  'live.idle': 'waiting for the first frame…',
 
   'log.title': 'Event log',
   'log.clear': 'Clear',
@@ -228,7 +233,7 @@ const zh: Dict = {
   'cfg.protocols': '协议',
   'cfg.duration': '时长',
   'cfg.interval': '间隔',
-  'cfg.payload': '负载',
+  'cfg.payload': '每帧文本',
   'cfg.custom': '自定义',
   'cfg.untilStopped': '运行到手动停止',
   'cfg.untilStoppedHint': '忽略上面的时长，一直推流直到你点停止。',
@@ -242,6 +247,11 @@ const zh: Dict = {
   'unit.minutes': '分钟',
   'unit.bytes': '字节',
   'unit.untilStopped': '直到手动停止',
+
+  'live.title': '实时数据',
+  'live.hint':
+    '服务端真正发过来的字节，按到达顺序追加。文本不动了就说明这条流卡住了。每个协议只保留最近一段。',
+  'live.idle': '等待第一帧…',
 
   'log.title': '事件日志',
   'log.clear': '清空',

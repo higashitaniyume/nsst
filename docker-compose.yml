@@ -60,6 +60,20 @@ services:
       LOG_LEVEL: "info"               # debug | info | warn | error
       LOG_FORMAT: "text"              # text | json
 
+      # The text that streams carry. Frames are slices of this file instead of
+      # the copy compiled into the image, so the payload can be replaced without
+      # rebuilding: edit the file, then `docker compose restart streamtest`.
+      # Point it anywhere in the container, or blank it to use the built-in text.
+      # A path that cannot be read is a startup failure, not a silent fallback.
+      PAYLOAD_FILE: "/data/payload.txt"
+
+    volumes:
+      # Read-only: the server only ever reads this file. Swap the left-hand side
+      # for your own text. Note that Docker creates an empty *directory* here if
+      # the source file does not exist, which the server rejects with a message
+      # saying exactly that.
+      - ./pkg/protocol/payload.txt:/data/payload.txt:ro
+
     restart: unless-stopped
 
     # Must exceed SHUTDOWN_TIMEOUT so Docker does not SIGKILL a draining server.

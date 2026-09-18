@@ -1,3 +1,4 @@
+import { utf8Length } from './transport.js';
 import type { ConnectionState, MetricsSnapshot, StreamFrame } from './types.js';
 
 /**
@@ -194,11 +195,13 @@ export class MetricsCollector {
 
     // Frame integrity: the server states how many payload bytes it wrote, so the
     // client can verify that nothing was truncated or re-encoded in transit.
+    // payload_size counts UTF-8 bytes rather than JavaScript characters, so a
+    // multi-byte document is measured in the same units the server used.
     if (frame.payload_size > 0) {
-      if ((frame.payload?.length ?? 0) !== frame.payload_size) {
+      if (utf8Length(frame.payload ?? '') !== frame.payload_size) {
         this.integrityErrors += 1;
       }
-    } else if (frame.payload !== undefined && frame.payload.length !== 0) {
+    } else if (frame.payload !== undefined && frame.payload !== '') {
       this.integrityErrors += 1;
     }
 

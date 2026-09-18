@@ -30,6 +30,13 @@ type Limits struct {
 	WriteTimeout time.Duration
 }
 
+// defaultPayloadSize is how much of the payload document one frame carries when
+// the client does not ask for a size: about one line of a terminal. A small
+// default keeps a test looking like a real streaming endpoint — many small
+// messages rather than a few huge ones — and gives the console a continuous
+// trickle of text to display.
+const defaultPayloadSize = 80
+
 // DefaultLimits returns the documented defaults.
 func DefaultLimits() Limits {
 	return Limits{
@@ -40,7 +47,7 @@ func DefaultLimits() Limits {
 		MaxInterval:          time.Minute,
 		DefaultInterval:      100 * time.Millisecond,
 		MaxPayloadSize:       1 << 20, // 1 MiB
-		DefaultPayloadSize:   4096,
+		DefaultPayloadSize:   defaultPayloadSize,
 		MaxConcurrentStreams: 100,
 		WriteTimeout:         15 * time.Second,
 	}

@@ -86,6 +86,17 @@ docker compose down
 NSST_PORT=60000 docker compose up -d
 ```
 
+Compose 还把**正文文件挂进容器**，用来替换内嵌在二进制里的那份：
+
+```yaml
+environment:
+  PAYLOAD_FILE: "/data/payload.txt"
+volumes:
+  - ./pkg/protocol/payload.txt:/data/payload.txt:ro
+```
+
+想换成自己的文字，把左边改成你的文件即可，**不需要重新构建镜像**，`docker compose restart streamtest` 就会生效（正文在启动时读入一次）。文件读不了会直接启动失败并说明原因——不会退回内嵌正文让你以为换成功了。直接 `docker run` 的话用 `-e PAYLOAD_FILE=... -v ...` 达到同样效果。
+
 镜像约 21 MB，进程以非 root（uid 10001）运行，自带 `HEALTHCHECK`。
 
 构建 amd64 + arm64 双架构镜像：
@@ -135,7 +146,9 @@ cd web && npm run dev      # :5173，/api 已代理到 8080（含 WebSocket）
 
 页面最顶上是一张**总图**：把三种协议的帧间隔曲线画在**同一对坐标轴**上，一眼就能看出哪个协议和别的不一样，不用在三张卡片之间来回翻。三条线的颜色就是各自的协议色（蓝 HTTP、绿 SSE、紫 WebSocket），图例在下方。这一块**只有这一张折线图，没有表格**，也只画帧间隔——吞吐和中断点仍然只在各自的卡片里。
 
-页面下面是**三张卡片竖排**：HTTP 一块、SSE 一块、WebSocket 一块，从上到下依次排列。每张卡片内部是**左右两栏**——左边放这个协议的读数，右边放它的图表，两边各自上下堆叠。窗口窄于 980px 时右栏自动落到左栏下面。
+页面下面是**实时数据**面板：三列，一列一个协议，把服务端真正发过来的字节按到达顺序原样追加进去，看上去就像一段正在一个字一个字蹦出来的文章。它不是装饰——**文本停住不动，就说明这条流卡住了**，比看数字直观。每个协议只保留最近一段（约 6000 字符，超出后从头部丢弃），所以跑一整夜也不会把页面撑爆；你往上翻看时它不会强行把你拽回底部。文本不做任何动画或补间，来多少写多少，否则卡顿就被动画掩盖了。
+
+再下面是**三张卡片竖排**：HTTP 一块、SSE 一块、WebSocket 一块，从上到下依次排列。每张卡片内部是**左右两栏**——左边放这个协议的读数，右边放它的图表，两边各自上下堆叠。窗口窄于 980px 时右栏自动落到左栏下面，实时数据的三列也会并成一列。
 
 ### 每个协议六张表
 
@@ -229,7 +242,7 @@ cd web && npm run dev      # :5173，/api 已代理到 8080（含 WebSocket）
     "max_concurrent_streams": 100,
     "write_timeout_ms": 15000
   },
-  "defaults": {"duration": 60, "interval": 100, "payload_size": 4096}
+  "defaults": {"duration": 60, "interval": 100, "payload_size": 80}
 }
 ```
 
@@ -259,15 +272,17 @@ cd web && npm run dev      # :5173，/api 已代理到 8080（含 WebSocket）
 NDJSON 流，一帧一行，写一帧 flush 一次。
 
 ```bash
-curl -N "http://localhost:8080/api/stream/http?duration=2&interval=250&payload_size=16"
+curl -N "http://localhost:8080/api/stream/http?duration=2&interval=250&payload_size=80"
 ```
 
 ```
-{"sequence":1,"server_time":1789659795314,"payload_size":16,"payload":"aaaaaaaaaaaaaaaa"}
-{"sequence":2,"server_time":1789659795564,"payload_size":16,"payload":"aaaaaaaaaaaaaaaa"}
-{"sequence":3,"server_time":1789659795814,"payload_size":16,"payload":"aaaaaaaaaaaaaaaa"}
-{"sequence":4,"server_time":1789659796064,"payload_size":16,"payload":"aaaaaaaaaaaaaaaa"}
+{"sequence":1,"server_time":1789705185598,"payload_size":80,"payload":"A network connection is often described as a simple path between two computers, "}
+{"sequence":2,"server_time":1789705185849,"payload_size":80,"payload":"but in practice it is a complex system made of many independent components. Data"}
+{"sequence":3,"server_time":1789705186099,"payload_size":80,"payload":" may travel through a local network, a wireless access point, a router, a firewa"}
+{"sequence":4,"server_time":1789705186349,"payload_size":80,"payload":"ll, a proxy server, several transit networks, and finally a remote server. Each "}
 ```
+
+每帧带 80 字节的正文，四帧连起来就是文章开头的一段。（第 3、4 帧在 `firewall` 中间断开：流是字节流，帧边界和单词边界没有关系。前端的完整性校验只看长度，不看内容。）
 
 响应头：`Content-Type: application/x-ndjson`、`Cache-Control: no-store`。
 
@@ -352,11 +367,35 @@ ws.onclose = (e) => console.log('closed', e.code, e.reason, 'frames=' + n);
 | --- | --- | --- | --- | --- |
 | `duration` | 秒 | 60 | 1 – `MAX_DURATION`（默认 3600） | 推送时长 |
 | `interval` | 毫秒 | 100 | `MIN_INTERVAL` – `MAX_INTERVAL`（默认 10 – 60000） | 帧间隔 |
-| `payload_size` | 字节 | 4096 | 0 – `MAX_PAYLOAD_SIZE`（默认 1048576） | 每帧负载大小，0 表示空负载 |
+| `payload_size` | 字节 | 80 | 0 – `MAX_PAYLOAD_SIZE`（默认 1048576） | 每帧携带的正文长度，0 表示空负载 |
 
 帧数是确定的：`ceil(duration * 1000 / interval)`。例如 `duration=1&interval=250` 正好 4 帧。
 
-`payload_size=0` 时帧里不出现 `payload` 字段（只有 3 个字段）；大于 0 时填充 `'a'` 字符，不做 JSON 转义。
+`payload_size=0` 时帧里不出现 `payload` 字段（只有 3 个字段）。
+
+### 负载内容
+
+`payload_size > 0` 时，`payload` 是 [`pkg/protocol/payload.txt`](pkg/protocol/payload.txt) 里那篇英文说明文的一段，不是重复的填充字符。每个流自己持有一个游标，每帧往后走一段，走到文章末尾就**绕回开头**接着发，所以测试跑多久都不会把内容发完 —— 这也是它和「发一个固定大响应」的区别。
+
+默认 80 字节，大约是一行终端：小步快跑更像真实的流式接口，前端也才有连续的文本可以显示。
+
+#### 换成自己的文字
+
+启动时设 `PAYLOAD_FILE` 指向任意文件，就会用文件内容替换内嵌正文（见上面的 Compose 挂载）。文件在启动时读一次，改完重启即可，**不用重新构建镜像**。下面的情况会直接启动失败：
+
+- 路径不存在，或者是个目录（挂载源文件不存在时 Docker 会创建目录，报错会点明这一点）；
+- 文件不是合法 UTF-8；
+- 文件是空的或只有空白。
+
+不会静默退回内嵌正文——否则你会以为在发自己的文字，其实发的是默认那篇。
+
+#### 编码与完整性
+
+正文段落之间是换行符。JSON 字符串里不能出现裸换行，所以编码器按需转义成 `\n`；`payload_size` 记的始终是**解码后**的字节数，客户端的校验因此不受转义影响。
+
+文档可以是任意 UTF-8。多字节字符会被整字处理：一帧切到最后一个**完整字符**为止，所以中文字档请求 20 字节时，实际发的是 18 字节（6 个汉字），帧里的 `payload_size` 如实写 18。客户端也按 UTF-8 **字节数**校验，而不是 JavaScript 的字符数——两者对汉字并不相等，混淆就会把正常的流报成校验失败。
+
+内嵌的那篇是纯 ASCII，走的是免对齐的快路径（每帧恰好 `payload_size` 字节），这个性质由 `pkg/protocol` 的测试守着。
 
 ---
 
@@ -376,6 +415,7 @@ ws.onclose = (e) => console.log('closed', e.code, e.reason, 'frames=' + n);
 | `WRITE_TIMEOUT_MS` | `15000` | 100 – 600000 | 单帧写超时（毫秒） |
 | `SHUTDOWN_TIMEOUT` | `15` | 1 – 600 | 优雅关闭排空时长（秒） |
 | `CORS_ALLOW_ORIGINS` | （空 = 仅同源） | 逗号分隔或 `*` | 允许的跨域来源 |
+| `PAYLOAD_FILE` | （空 = 用内嵌正文） | 容器内可读的文件路径 | 流式正文的来源，启动时读一次 |
 | `LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` | 日志级别 |
 | `LOG_FORMAT` | `text` | `text`/`json` | 日志格式 |
 
@@ -474,12 +514,15 @@ NSST/
 │   └── webui/                    # go:embed 前端 + 静态文件服务
 │       └── dist/                 # npm run build 的产物（已提交，见上文说明）
 ├── pkg/protocol/                 # 帧编解码（对外可复用）
+│   ├── payload.txt               # 内嵌的流式正文（可用 PAYLOAD_FILE 替换）
+│   └── payload.go                # 正文切分、JSON 转义、外部文件加载
 ├── web/
 │   ├── index.html
 │   ├── public/favicon.svg
 │   ├── src/
 │   │   ├── main.ts               # 三协议并发运行器 + 共享时钟
 │   │   ├── views.ts              # 六张表 + 每协议图表与结论
+│   │   ├── live-text.ts          # 实时数据面板（逐帧追加正文）
 │   │   ├── i18n.ts               # 中英文词典与语言切换
 │   │   ├── metrics.ts            # 客户端指标采集
 │   │   ├── chart.ts              # uPlot 多序列图表
@@ -527,11 +570,11 @@ make smoke         # 对已运行的服务做三协议冒烟测试
 
 ### 覆盖情况
 
-71 个测试函数，10 个测试文件：
+83 个测试函数，11 个测试文件：
 
 | 包 | 数量 | 重点 |
 | --- | --- | --- |
-| `pkg/protocol` | 7 | 帧编解码、字节级比对、`payload_size=0` 的 3 字段形式、编码器缓存 |
+| `pkg/protocol` | 19 | 帧编解码、字节级比对、`payload_size=0` 的 3 字段形式、编码器缓存、正文环绕、换行转义、多字节字符不被切开、外部文件加载的各种失败 |
 | `internal/stream` | 25 | pacer 不漂移/不补发、参数边界、写错误分类、配额、排空、强制关闭 |
 | `internal/api` | 15 | 全部端点、404/405、三协议非法参数、并发上限 503、CORS 四种配置 |
 | `internal/httpstream` | 7 | 响应头、逐帧结构、首帧立刻到达、客户端断开、空负载 |

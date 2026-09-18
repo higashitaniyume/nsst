@@ -53,7 +53,7 @@ func TestLoadFromDefaults(t *testing.T) {
 	if lim.WriteTimeout != 15*time.Second {
 		t.Errorf("write timeout = %v, want 15s", lim.WriteTimeout)
 	}
-	if lim.DefaultDuration != time.Minute || lim.DefaultInterval != 100*time.Millisecond || lim.DefaultPayloadSize != 4096 {
+	if lim.DefaultDuration != time.Minute || lim.DefaultInterval != 100*time.Millisecond || lim.DefaultPayloadSize != 80 {
 		t.Errorf("unexpected defaults: %+v", lim)
 	}
 }
@@ -72,6 +72,7 @@ func TestLoadFromOverrides(t *testing.T) {
 		"CORS_ALLOW_ORIGINS":     "https://example.com, http://localhost:5173",
 		"LOG_LEVEL":              "debug",
 		"LOG_FORMAT":             "json",
+		"PAYLOAD_FILE":           "/data/payload.txt",
 	}))
 	if err != nil {
 		t.Fatalf("LoadFrom: %v", err)
@@ -100,6 +101,9 @@ func TestLoadFromOverrides(t *testing.T) {
 	}
 	if cfg.ShutdownTimeout != 3*time.Second {
 		t.Errorf("shutdown timeout = %v", cfg.ShutdownTimeout)
+	}
+	if cfg.PayloadFile != "/data/payload.txt" {
+		t.Errorf("payload file = %q", cfg.PayloadFile)
 	}
 	if len(cfg.CORSAllowOrigins) != 2 || cfg.CORSAllowOrigins[0] != "https://example.com" || cfg.CORSAllowOrigins[1] != "http://localhost:5173" {
 		t.Errorf("cors origins = %v", cfg.CORSAllowOrigins)

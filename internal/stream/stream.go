@@ -74,6 +74,9 @@ func Run(ctx context.Context, params Params, enc *protocol.Encoder, sink Sink, c
 
 	buf := make([]byte, 0, 256+enc.PayloadSize())
 	var seq uint64
+	// offset walks the payload document one chunk per frame; the encoder wraps it
+	// at the end of the document so that a long test never runs out of text.
+	var offset int
 
 	for {
 		emit, err := pacer.Wait(ctx, deadline)
@@ -90,7 +93,9 @@ func Run(ctx context.Context, params Params, enc *protocol.Encoder, sink Sink, c
 
 		now := time.Now()
 		seq++
-		buf = enc.Append(buf[:0], seq, now.UnixMilli())
+		var consumed int
+		buf, consumed = enc.Append(buf[:0], seq, now.UnixMilli(), offset)
+		offset += consumed
 
 		if err := sink.WriteFrame(ctx, seq, buf); err != nil {
 			res.EndedAt = time.Now()
