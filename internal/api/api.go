@@ -58,6 +58,7 @@ func New(opts Options) *API {
 	mux.HandleFunc("GET /api/info", a.handleInfo)
 	mux.HandleFunc("GET /api/config", a.handleConfig)
 	mux.HandleFunc("GET /api/metrics", a.handleMetrics)
+	mux.HandleFunc("GET /api/client", a.handleClient)
 
 	// The three streaming protocols.
 	mux.Handle("GET /api/stream/http",
@@ -191,6 +192,7 @@ var knownRoutes = map[string]string{
 	"/api/info":        "GET, HEAD, OPTIONS",
 	"/api/config":      "GET, HEAD, OPTIONS",
 	"/api/metrics":     "GET, HEAD, OPTIONS",
+	"/api/client":      "GET, HEAD, OPTIONS",
 	"/api/stream/http": "GET, OPTIONS",
 	"/api/stream/sse":  "GET, OPTIONS",
 	"/api/stream/ws":   "GET, OPTIONS",
@@ -202,6 +204,7 @@ func endpoints() map[string]string {
 		"info":      "/api/info",
 		"config":    "/api/config",
 		"metrics":   "/api/metrics",
+		"client":    "/api/client",
 		"http":      "/api/stream/http",
 		"sse":       "/api/stream/sse",
 		"websocket": "/api/stream/ws",

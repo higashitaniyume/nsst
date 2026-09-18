@@ -195,6 +195,101 @@ func TestMetrics(t *testing.T) {
 	}
 }
 
+func TestClientEndpointReportsProxyHeaders(t *testing.T) {
+	stack := testsupport.New(testsupport.FastLimits(), nil)
+	defer stack.Close()
+
+	req, err := http.NewRequest(http.MethodGet, stack.URL("/api/client"), nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.1")
+	req.Header.Set("User-Agent", "nsst-test/1.0")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/client: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var got struct {
+		IP             string   `json:"ip"`
+		IPSource       string   `json:"ip_source"`
+		Proxy          bool     `json:"proxy"`
+		RemoteAddr     string   `json:"remote_addr"`
+		ForwardedFor   []string `json:"forwarded_for"`
+		UserAgent      string   `json:"user_agent"`
+		AcceptLanguage string   `json:"accept_language"`
+		Host           string   `json:"host"`
+		Proto          string   `json:"proto"`
+		TLS            bool     `json:"tls"`
+		ServerTime     int64    `json:"server_time"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if got.IP != "203.0.113.7" {
+		t.Errorf("ip = %q, want 203.0.113.7", got.IP)
+	}
+	if got.IPSource != httpx.SourceXForwardedFor {
+		t.Errorf("ip_source = %q, want %q", got.IPSource, httpx.SourceXForwardedFor)
+	}
+	if !got.Proxy {
+		t.Error("proxy = false, want true when the address came from a header")
+	}
+	if len(got.ForwardedFor) != 2 || got.ForwardedFor[0] != "203.0.113.7" {
+		t.Errorf("forwarded_for = %v, want the two hop chain", got.ForwardedFor)
+	}
+	if got.UserAgent != "nsst-test/1.0" {
+		t.Errorf("user_agent = %q, want nsst-test/1.0", got.UserAgent)
+	}
+	if got.AcceptLanguage != "zh-CN,zh;q=0.9" {
+		t.Errorf("accept_language = %q", got.AcceptLanguage)
+	}
+	if got.Host == "" || got.Proto == "" || got.RemoteAddr == "" {
+		t.Errorf("transport fields incomplete: %+v", got)
+	}
+	if got.TLS {
+		t.Error("tls = true on a plain httptest server")
+	}
+	if skew := time.Since(time.UnixMilli(got.ServerTime)); skew > time.Minute || skew < -time.Minute {
+		t.Errorf("server_time is %v away from the test clock", skew)
+	}
+}
+
+func TestClientEndpointFallsBackToTheSocketPeer(t *testing.T) {
+	stack := testsupport.New(testsupport.FastLimits(), nil)
+	defer stack.Close()
+
+	var got struct {
+		IP         string `json:"ip"`
+		IPSource   string `json:"ip_source"`
+		Proxy      bool   `json:"proxy"`
+		RemoteAddr string `json:"remote_addr"`
+	}
+	getJSON(t, stack, "/api/client", &got)
+
+	if got.IPSource != httpx.SourceRemoteAddr {
+		t.Errorf("ip_source = %q, want %q", got.IPSource, httpx.SourceRemoteAddr)
+	}
+	if got.Proxy {
+		t.Error("proxy = true without a proxy header")
+	}
+	if got.IP == "" {
+		t.Error("ip must not be empty")
+	}
+	// httptest always dials a host:port pair, so the displayed address must be
+	// the peer without its ephemeral port.
+	if got.IP == got.RemoteAddr {
+		t.Errorf("ip = %q, want the port stripped from %q", got.IP, got.RemoteAddr)
+	}
+}
+
 func TestUnknownEndpointReturnsJSON404(t *testing.T) {
 	stack := testsupport.New(testsupport.FastLimits(), nil)
 	defer stack.Close()
@@ -221,17 +316,29 @@ func TestWrongMethodReturns405(t *testing.T) {
 	stack := testsupport.New(testsupport.FastLimits(), nil)
 	defer stack.Close()
 
-	resp, err := http.Post(stack.URL("/api/health"), "application/json", strings.NewReader("{}"))
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	defer resp.Body.Close()
+	// Every GET-only REST route must answer a POST with 405 and an Allow header
+	// rather than falling through to the unknown-endpoint 404.
+	for _, path := range []string{
+		"/api/health",
+		"/api/info",
+		"/api/config",
+		"/api/metrics",
+		"/api/client",
+	} {
+		t.Run(path, func(t *testing.T) {
+			resp, err := http.Post(stack.URL(path), "application/json", strings.NewReader("{}"))
+			if err != nil {
+				t.Fatalf("POST: %v", err)
+			}
+			defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want 405", resp.StatusCode)
-	}
-	if allow := resp.Header.Get("Allow"); !strings.Contains(allow, "GET") {
-		t.Fatalf("Allow = %q, want it to contain GET", allow)
+			if resp.StatusCode != http.StatusMethodNotAllowed {
+				t.Fatalf("status = %d, want 405", resp.StatusCode)
+			}
+			if allow := resp.Header.Get("Allow"); !strings.Contains(allow, "GET") {
+				t.Fatalf("Allow = %q, want it to contain GET", allow)
+			}
+		})
 	}
 }
 
