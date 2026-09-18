@@ -22,8 +22,11 @@ const Name = "StreamTest"
 // It is a variable rather than a constant so that release builds can stamp a
 // real version in at link time:
 //
-//	go build -ldflags "-X github.com/nsst/streamtest/internal/config.Version=v1.2.3"
-var Version = "1.0.0"
+//	go build -ldflags "-X github.com/nsst/streamtest/internal/config.Version=1.2.3"
+//
+// Release builds always overwrite it; the value below is what a plain
+// `go build` reports, and it tracks the most recent release.
+var Version = "0.2.0"
 
 // Config is the fully resolved server configuration.
 type Config struct {
