@@ -3,6 +3,9 @@ import { applyStatic, t } from './i18n.js';
 import { setClass, setText } from './ui.js';
 import type { MetricsSnapshot, Protocol, StreamParams } from './types.js';
 
+/** Which of the two presentations is on screen. */
+export type ViewMode = 'simple' | 'pro';
+
 /** Line colour per protocol, shared by the cards and the charts. */
 export const PROTOCOL_COLORS: Record<Protocol, string> = {
   'http-stream': '#4f9cf9',
@@ -10,12 +13,14 @@ export const PROTOCOL_COLORS: Record<Protocol, string> = {
   websocket: '#c792ea',
 };
 
-/** Stream endpoint each card talks to, shown under its title. */
+/** Stream endpoint each card talks to, shown under its title in the pro view. */
 export const PROTOCOL_ENDPOINTS: Record<Protocol, string> = {
   'http-stream': '/api/stream/http',
   sse: '/api/stream/sse',
   websocket: '/api/stream/ws',
 };
+
+// ---------------------------------------------------------------- pro tables
 
 /** Table 1: connection and traffic. */
 const TRAFFIC_ROWS = [
@@ -44,45 +49,46 @@ type RowKey = (typeof TRAFFIC_ROWS)[number] | (typeof TIMING_ROWS)[number];
 
 type CellMap = Map<RowKey, HTMLTableCellElement>;
 
-function buildTable(
-  titleKey: string,
-  rows: readonly RowKey[],
-): { block: HTMLElement; cells: CellMap } {
-  const block = document.createElement('div');
-  block.className = 'metrics-block';
+// ------------------------------------------------------------- simple tables
 
-  const title = document.createElement('h3');
-  title.className = 'table-title';
-  title.dataset.i18n = titleKey;
-  title.textContent = t(titleKey);
+/**
+ * The plain-language rows. They say the same things as the pro tables but in
+ * words someone who has never read a protocol spec would use.
+ */
+const SIMPLE_ROWS = ['frames', 'size', 'pace', 'stalls', 'worst', 'drops'] as const;
 
-  const table = document.createElement('table');
-  table.className = 'metrics-table';
+type SimpleRowKey = (typeof SIMPLE_ROWS)[number];
 
-  const tbody = document.createElement('tbody');
-  const cells: CellMap = new Map();
+type SimpleCellMap = Map<SimpleRowKey, HTMLTableCellElement>;
 
-  for (const key of rows) {
-    const tr = document.createElement('tr');
+// ---------------------------------------------------------------- formatting
 
-    const th = document.createElement('th');
-    th.scope = 'row';
-    th.dataset.i18n = `row.${key}`;
-    th.textContent = t(`row.${key}`);
-
-    const td = document.createElement('td');
-    td.className = 'mono';
-    td.textContent = t('value.na');
-
-    tr.append(th, td);
-    tbody.append(tr);
-    cells.set(key, td);
-  }
-
-  table.append(tbody);
-  block.append(title, table);
-  return { block, cells };
+/** Counts read better with a thousands separator: 1,204 rather than 1204. */
+function formatCount(value: number): string {
+  return Math.max(0, Math.round(value)).toLocaleString();
 }
+
+/**
+ * A duration a layperson can picture: "120 毫秒", "1.4 秒", "2 分钟". The pro
+ * view keeps the raw millisecond figure instead.
+ */
+function friendlyDuration(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms)) return t('value.na');
+  if (ms < 1000) return `${Math.round(ms)} ${t('unit.ms')}`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)} ${t('unit.seconds')}`;
+  return `${Math.round(ms / 60000)} ${t('unit.minutes')}`;
+}
+
+/** Decimal units, which is what people expect from a file size. */
+function friendlyBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return t('value.na');
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+// ------------------------------------------------------------------ verdicts
 
 export interface Verdict {
   level: 'good' | 'warn' | 'bad';
@@ -152,16 +158,198 @@ export function verdictFor(
   };
 }
 
+export interface SimpleVerdict {
+  level: 'good' | 'warn' | 'bad' | 'idle';
+  /** Short badge next to the card title. */
+  status: string;
+  /** One sentence explaining what that means. */
+  text: string;
+}
+
 /**
- * One protocol card: a heading, the endpoint it uses, and the two metric tables
- * (connection & traffic, timing & gaps) plus a one line verdict.
+ * The same judgement as {@link verdictFor}, phrased without a single technical
+ * term. Thresholds are deliberately hidden: "it stalled twice for up to 1.4
+ * seconds" is actionable, "the gap exceeded 3x the target interval" is not.
+ */
+export function simpleVerdictFor(snapshot: MetricsSnapshot): SimpleVerdict {
+  if (snapshot.state === 'idle') {
+    return { level: 'idle', status: t('simple.status.idle'), text: t('simple.verdict.noData') };
+  }
+
+  if (snapshot.frames === 0) {
+    if (snapshot.state === 'error') {
+      return { level: 'bad', status: t('simple.status.dead'), text: t('simple.verdict.error') };
+    }
+    return {
+      level: 'idle',
+      status: t('simple.status.connecting'),
+      text: t('simple.verdict.noData'),
+    };
+  }
+
+  // Data arrived, then the connection died: that is worth flagging even when no
+  // single gap crossed the stall threshold.
+  if (snapshot.state === 'error' || snapshot.state === 'disconnected') {
+    return { level: 'bad', status: t('simple.status.broke'), text: t('simple.verdict.broke') };
+  }
+
+  const gap = friendlyDuration(snapshot.longestGapMs);
+
+  if (snapshot.interruptions === 0) {
+    return { level: 'good', status: t('simple.status.flowing'), text: t('simple.verdict.flowing') };
+  }
+  if (snapshot.interruptions <= 2) {
+    return {
+      level: 'warn',
+      status: t('simple.status.minor'),
+      text: t('simple.verdict.minor', { gap }),
+    };
+  }
+  return {
+    level: 'bad',
+    status: t('simple.status.laggy'),
+    text: t('simple.verdict.laggy', { count: snapshot.interruptions, gap }),
+  };
+}
+
+export interface SimpleSummary {
+  level: 'good' | 'warn' | 'idle';
+  text: string;
+}
+
+/** One sentence covering all three protocols, for the panel above the cards. */
+export function simpleSummaryFor(
+  entries: readonly { protocol: Protocol; snapshot: MetricsSnapshot }[],
+): SimpleSummary {
+  const measured = entries.filter((entry) => entry.snapshot.frames > 0);
+  if (measured.length === 0) {
+    return { level: 'idle', text: t('simple.summaryWaiting') };
+  }
+
+  const troubled = measured.filter(
+    (entry) =>
+      entry.snapshot.interruptions > 0 ||
+      entry.snapshot.state === 'error' ||
+      entry.snapshot.state === 'disconnected',
+  );
+  if (troubled.length === 0) {
+    return { level: 'good', text: t('simple.summaryAll') };
+  }
+
+  return {
+    level: 'warn',
+    text: t('simple.summarySome', {
+      protocols: troubled.map((entry) => t(`simple.name.${entry.protocol}`)).join(t('list.sep')),
+    }),
+  };
+}
+
+// -------------------------------------------------------------- card builders
+
+function buildTable(titleKey: string, rows: readonly RowKey[]): { block: HTMLElement; cells: CellMap } {
+  const block = document.createElement('div');
+  block.className = 'metrics-block';
+
+  const title = document.createElement('h3');
+  title.className = 'table-title';
+  title.dataset.i18n = titleKey;
+  title.textContent = t(titleKey);
+
+  const table = document.createElement('table');
+  table.className = 'metrics-table';
+
+  const tbody = document.createElement('tbody');
+  const cells: CellMap = new Map();
+
+  for (const key of rows) {
+    const tr = document.createElement('tr');
+
+    const th = document.createElement('th');
+    th.scope = 'row';
+    th.dataset.i18n = `row.${key}`;
+    th.textContent = t(`row.${key}`);
+
+    const td = document.createElement('td');
+    td.className = 'mono';
+    td.textContent = t('value.na');
+
+    tr.append(th, td);
+    tbody.append(tr);
+    cells.set(key, td);
+  }
+
+  table.append(tbody);
+  block.append(title, table);
+  return { block, cells };
+}
+
+function buildSimpleBlock(): {
+  block: HTMLElement;
+  cells: SimpleCellMap;
+  verdict: HTMLElement;
+} {
+  const block = document.createElement('div');
+  block.className = 'proto-simple';
+
+  const table = document.createElement('table');
+  table.className = 'simple-table';
+
+  const tbody = document.createElement('tbody');
+  const cells: SimpleCellMap = new Map();
+
+  for (const key of SIMPLE_ROWS) {
+    const tr = document.createElement('tr');
+
+    const th = document.createElement('th');
+    th.scope = 'row';
+    th.dataset.i18n = `simple.row.${key}`;
+    th.textContent = t(`simple.row.${key}`);
+
+    const td = document.createElement('td');
+    td.className = 'simple-value';
+    td.textContent = t('value.na');
+
+    tr.append(th, td);
+    tbody.append(tr);
+    cells.set(key, td);
+  }
+
+  table.append(tbody);
+
+  const verdict = document.createElement('p');
+  verdict.className = 'simple-verdict';
+
+  block.append(table, verdict);
+  return { block, cells, verdict };
+}
+
+// ------------------------------------------------------------------ the card
+
+/**
+ * One protocol card. It carries both presentations at once and CSS decides which
+ * one is visible, so flipping modes is instant and never loses a reading.
+ *
+ *   .proto-simple   plain language, no jargon
+ *   .proto-pro      the two full metric tables
  */
 export class ProtocolCard {
   readonly root: HTMLElement;
 
   private readonly cells: CellMap;
+  private readonly simpleCells: SimpleCellMap;
   private readonly statePill: HTMLElement;
+  private readonly simplePill: HTMLElement;
   private readonly verdict: HTMLElement;
+  private readonly simpleVerdict: HTMLElement;
+
+  /** Kept so a language switch can redraw text that is not in the markup. */
+  private last: {
+    snapshot: MetricsSnapshot;
+    params: StreamParams;
+    expectedFrames: number;
+    untilStopped: boolean;
+    running: boolean;
+  } | null = null;
 
   constructor(readonly protocol: Protocol) {
     const root = document.createElement('article');
@@ -173,18 +361,36 @@ export class ProtocolCard {
 
     const name = document.createElement('h2');
     name.className = 'proto-name';
-    name.dataset.i18n = `proto.${protocol}`;
-    name.textContent = t(`proto.${protocol}`);
+
+    const simpleName = document.createElement('span');
+    simpleName.className = 'only-simple';
+    simpleName.dataset.i18n = `simple.name.${protocol}`;
+    simpleName.textContent = t(`simple.name.${protocol}`);
+
+    const proName = document.createElement('span');
+    proName.className = 'only-pro';
+    proName.dataset.i18n = `proto.${protocol}`;
+    proName.textContent = t(`proto.${protocol}`);
+
+    name.append(simpleName, proName);
+
+    const simplePill = document.createElement('span');
+    simplePill.className = 'pill only-simple simple-pill';
 
     const pill = document.createElement('span');
-    pill.className = 'pill state-idle';
+    pill.className = 'pill only-pro state-idle';
     pill.textContent = t('state.idle');
 
-    head.append(name, pill);
+    head.append(name, simplePill, pill);
 
     const endpoint = document.createElement('code');
-    endpoint.className = 'proto-endpoint';
+    endpoint.className = 'proto-endpoint only-pro';
     endpoint.textContent = PROTOCOL_ENDPOINTS[protocol];
+
+    const about = document.createElement('p');
+    about.className = 'simple-about only-simple';
+    about.dataset.i18n = `simple.about.${protocol}`;
+    about.textContent = t(`simple.about.${protocol}`);
 
     const traffic = buildTable('table.traffic', TRAFFIC_ROWS);
     const timing = buildTable('table.timing', TIMING_ROWS);
@@ -192,29 +398,64 @@ export class ProtocolCard {
     const verdict = document.createElement('p');
     verdict.className = 'proto-verdict';
 
-    root.append(head, endpoint, traffic.block, timing.block, verdict);
+    const pro = document.createElement('div');
+    pro.className = 'proto-pro only-pro';
+    pro.append(traffic.block, timing.block, verdict);
+
+    const simple = buildSimpleBlock();
+    simple.block.classList.add('only-simple');
+
+    root.append(head, endpoint, about, simple.block, pro);
 
     this.root = root;
     this.statePill = pill;
+    this.simplePill = simplePill;
     this.verdict = verdict;
+    this.simpleVerdict = simple.verdict;
     this.cells = new Map([...traffic.cells, ...timing.cells]);
+    this.simpleCells = simple.cells;
   }
 
-  /** Re-applies every translated label after a language change. */
+  /**
+   * Re-applies every translated label, then redraws the values whose text is
+   * built in code rather than declared in the markup.
+   */
   renderLabels(): void {
     applyStatic(this.root);
+    if (this.last) {
+      this.update(
+        this.last.snapshot,
+        this.last.params,
+        this.last.expectedFrames,
+        this.last.untilStopped,
+        this.last.running,
+      );
+    }
   }
 
   /** Returns the card to its pre-run state. */
   reset(): void {
+    this.last = null;
+
     setText(this.statePill, t('state.idle'));
-    setClass(this.statePill, 'pill', 'state-idle');
+    setClass(this.statePill, 'pill', 'only-pro', 'state-idle');
+
+    setText(this.simplePill, t('simple.status.idle'));
+    setClass(this.simplePill, 'pill', 'only-simple', 'simple-pill');
+
     for (const [, cell] of this.cells) {
       setText(cell, t('value.na'));
       setClass(cell, 'mono');
     }
+    for (const [, cell] of this.simpleCells) {
+      setText(cell, t('value.na'));
+    }
+
     setText(this.verdict, '');
     setClass(this.verdict, 'proto-verdict');
+
+    setText(this.simpleVerdict, '');
+    setClass(this.simpleVerdict, 'simple-verdict');
   }
 
   update(
@@ -224,9 +465,24 @@ export class ProtocolCard {
     untilStopped: boolean,
     running: boolean,
   ): void {
+    this.last = { snapshot, params, expectedFrames, untilStopped, running };
+
+    this.updatePro(snapshot, params, expectedFrames, untilStopped, running);
+    this.updateSimple(snapshot);
+  }
+
+  // --- professional presentation ------------------------------------------
+
+  private updatePro(
+    snapshot: MetricsSnapshot,
+    params: StreamParams,
+    expectedFrames: number,
+    untilStopped: boolean,
+    running: boolean,
+  ): void {
     const state = snapshot.state;
     setText(this.statePill, t(`state.${state}`));
-    setClass(this.statePill, 'pill', `state-${state}`);
+    setClass(this.statePill, 'pill', 'only-pro', `state-${state}`);
 
     const cell = (key: RowKey): HTMLTableCellElement | null => this.cells.get(key) ?? null;
 
@@ -287,5 +543,57 @@ export class ProtocolCard {
     const verdict = verdictFor(snapshot, params, expectedFrames, untilStopped, running);
     setText(this.verdict, verdict.text);
     setClass(this.verdict, 'proto-verdict', `verdict-${verdict.level}`);
+  }
+
+  // --- plain-language presentation ----------------------------------------
+
+  private updateSimple(snapshot: MetricsSnapshot): void {
+    const verdict = simpleVerdictFor(snapshot);
+
+    setText(this.simplePill, verdict.status);
+    setClass(this.simplePill, 'pill', 'only-simple', 'simple-pill', `simple-${verdict.level}`);
+
+    setText(this.simpleVerdict, verdict.text);
+    setClass(this.simpleVerdict, 'simple-verdict', `verdict-${verdict.level}`);
+
+    const cell = (key: SimpleRowKey): HTMLTableCellElement | null =>
+      this.simpleCells.get(key) ?? null;
+
+    setText(cell('frames'), t('simple.value.frames', { count: formatCount(snapshot.frames) }));
+    setText(cell('size'), friendlyBytes(snapshot.bytes));
+
+    setText(
+      cell('pace'),
+      snapshot.avgIntervalMs === null
+        ? t('value.na')
+        : t('simple.value.pace', { interval: friendlyDuration(snapshot.avgIntervalMs) }),
+    );
+
+    const stalls = cell('stalls');
+    if (snapshot.interruptions === 0) {
+      setText(stalls, t('simple.value.noStalls'));
+      setClass(stalls, 'simple-value', 'ok');
+    } else {
+      setText(stalls, t('simple.value.stalls', { count: snapshot.interruptions }));
+      setClass(stalls, 'simple-value', 'bad');
+    }
+
+    const worst = cell('worst');
+    if (snapshot.longestGapMs <= 0) {
+      setText(worst, t('simple.value.noWorst'));
+      setClass(worst, 'simple-value', 'ok');
+    } else {
+      setText(worst, friendlyDuration(snapshot.longestGapMs));
+      setClass(worst, 'simple-value', 'bad');
+    }
+
+    const drops = cell('drops');
+    if (snapshot.reconnects === 0) {
+      setText(drops, t('simple.value.noDrops'));
+      setClass(drops, 'simple-value', 'ok');
+    } else {
+      setText(drops, t('simple.value.drops', { count: snapshot.reconnects }));
+      setClass(drops, 'simple-value', 'warn');
+    }
   }
 }

@@ -6,10 +6,17 @@ import { applyStatic, onLangChange, t, toggleLang } from './i18n.js';
 import { MetricsCollector } from './metrics.js';
 import { createSSETransport } from './sse.js';
 import type { CloseReason, Message, Transport, TransportCallbacks } from './transport.js';
-import type { ConfigResponse, ConnectionState, Protocol, StreamParams } from './types.js';
+import type {
+  ConfigResponse,
+  ConnectionState,
+  MetricsSnapshot,
+  Protocol,
+  StreamParams,
+} from './types.js';
 import { PROTOCOLS } from './types.js';
-import { EventLog, NumericChoiceGroup, requireElement, setText } from './ui.js';
-import { PROTOCOL_COLORS, ProtocolCard } from './views.js';
+import { EventLog, NumericChoiceGroup, requireElement, setClass, setText } from './ui.js';
+import { PROTOCOL_COLORS, ProtocolCard, simpleSummaryFor } from './views.js';
+import type { ViewMode } from './views.js';
 import { createWebSocketTransport } from './websocket.js';
 
 import 'uplot/dist/uPlot.min.css';
@@ -270,6 +277,7 @@ class Suite {
   private readonly peaksChart: MultiChart;
 
   private readonly log: EventLog;
+  private readonly summary: HTMLElement;
   private readonly onRunningChanged: (running: boolean) => void;
 
   private ticker: number | null = null;
@@ -278,9 +286,12 @@ class Suite {
   private expectedFrames = 0;
   private untilStopped = true;
   private running = false;
+  /** Latest snapshot per protocol, kept so a language switch can redraw the summary. */
+  private entries: { protocol: Protocol; snapshot: MetricsSnapshot }[] = [];
 
   constructor(options: {
     grid: HTMLElement;
+    summary: HTMLElement;
     intervalChart: MultiChart;
     throughputChart: MultiChart;
     peaksChart: MultiChart;
@@ -291,6 +302,7 @@ class Suite {
     this.throughputChart = options.throughputChart;
     this.peaksChart = options.peaksChart;
     this.log = options.log;
+    this.summary = options.summary;
     this.onRunningChanged = options.onRunningChanged;
 
     for (const protocol of PROTOCOLS) {
@@ -304,13 +316,40 @@ class Suite {
     return this.running;
   }
 
-  /** Re-applies translated labels on the cards and the chart legends. */
+  /** Re-applies translated labels on the cards, the summary and the chart legends. */
   renderLabels(): void {
     for (const [, card] of this.cards) card.renderLabels();
+    this.renderSummary();
     const labels = PROTOCOLS.map((protocol) => t(`proto.${protocol}`));
     this.intervalChart.setSeriesLabels(labels);
     this.throughputChart.setSeriesLabels(labels);
     this.peaksChart.setSeriesLabels(labels);
+  }
+
+  /**
+   * Repaints every card and the plain-language summary from live snapshots.
+   *
+   * This is deliberately separate from {@link tick}: the charts only get a point
+   * while a stream is producing samples, but the cards must still be repainted
+   * once the last stream settles so the terminal state reaches the screen.
+   */
+  private paint(now: number): void {
+    const entries: { protocol: Protocol; snapshot: MetricsSnapshot }[] = [];
+    for (const protocol of PROTOCOLS) {
+      const run = this.runs.get(protocol);
+      if (!run) continue;
+      const snapshot = run.snapshot(now);
+      entries.push({ protocol, snapshot });
+      run.card.update(snapshot, this.params, this.expectedFrames, this.untilStopped, this.running);
+    }
+    this.entries = entries;
+    this.renderSummary();
+  }
+
+  private renderSummary(): void {
+    const summary = simpleSummaryFor(this.entries);
+    setText(this.summary, summary.text);
+    setClass(this.summary, 'simple-summary', `summary-${summary.level}`);
   }
 
   /**
@@ -369,6 +408,9 @@ class Suite {
     for (const [, run] of this.runs) run.stop();
     const wasRunning = this.running;
     this.running = false;
+    // One last repaint so the cards settle on "stopped" rather than showing the
+    // state they held during the final tick.
+    if (wasRunning) this.paint(performance.now());
     if (wasRunning) this.onRunningChanged(false);
   }
 
@@ -377,12 +419,14 @@ class Suite {
     for (const [, run] of this.runs) {
       if (!run.isFinished) return;
     }
-    // Every stream ended on its own: stop the ticker but keep the readings.
+    // Every stream ended on its own: paint the terminal state, then stop the
+    // ticker and leave the readings on screen.
+    this.running = false;
+    this.paint(performance.now());
     if (this.ticker !== null) {
       window.clearInterval(this.ticker);
       this.ticker = null;
     }
-    this.running = false;
     this.onRunningChanged(false);
   }
 
@@ -396,9 +440,10 @@ class Suite {
 
     for (const protocol of PROTOCOLS) {
       const run = this.runs.get(protocol);
+      // sample() returns null once a run has settled, which ends its series.
       const sample = run ? run.sample(now) : null;
 
-      if (!run || !sample) {
+      if (!sample) {
         intervals.push(null);
         throughputs.push(null);
         peaks.push(null);
@@ -408,14 +453,11 @@ class Suite {
       intervals.push(sample.intervalMs);
       throughputs.push(sample.throughputBps);
       peaks.push(sample.stallMs > 0 ? sample.stallMs : null);
-      run.card.update(
-        run.snapshot(now),
-        this.params,
-        this.expectedFrames,
-        this.untilStopped,
-        this.running,
-      );
     }
+
+    // The cards and the summary are painted from the snapshots rather than from
+    // the chart samples, so a settled stream still shows its final verdict.
+    this.paint(now);
 
     this.intervalChart.push(x, intervals);
     this.throughputChart.push(x, throughputs);
@@ -527,6 +569,7 @@ async function boot(): Promise<void> {
 
   const suite = new Suite({
     grid: requireElement('protocol-grid'),
+    summary: requireElement('simple-summary'),
     intervalChart,
     throughputChart,
     peaksChart,
@@ -581,7 +624,54 @@ async function boot(): Promise<void> {
     setText(runNote, t(suite.isRunning ? 'run.noteAuto' : 'run.noteStopped'));
     cfgNotice.textContent = suite.isRunning ? t('cfg.locked') : t('cfg.ready');
     renderLimits();
+    applyMode();
   });
+
+  // --- view mode ----------------------------------------------------------
+  // Plain language is the default: someone who opens this page to find out
+  // whether their connection is stable should not have to read a protocol spec
+  // first. The pro view keeps every raw reading, the charts and the event log.
+  const MODE_KEY = 'nsst.mode';
+  const modeButton = requireElement<HTMLButtonElement>('mode-toggle');
+
+  let mode: ViewMode = 'simple';
+  try {
+    const saved = window.localStorage.getItem(MODE_KEY);
+    if (saved === 'simple' || saved === 'pro') mode = saved;
+  } catch {
+    // Private browsing or a storage-blocking extension: the default is fine.
+  }
+
+  function applyMode(): void {
+    document.body.classList.toggle('mode-simple', mode === 'simple');
+    document.body.classList.toggle('mode-pro', mode === 'pro');
+    // The button switches to the other view, so its label names the target.
+    setText(modeButton, t(mode === 'simple' ? 'mode.toPro' : 'mode.toSimple'));
+    modeButton.title = t(mode === 'simple' ? 'mode.toProTitle' : 'mode.toSimpleTitle');
+
+    // uPlot measures its container, and in simple mode the chart panels are
+    // display:none. Remeasuring once they are visible keeps the charts from
+    // collapsing to their minimum width.
+    if (mode === 'pro') {
+      window.requestAnimationFrame(() => {
+        intervalChart.resize();
+        throughputChart.resize();
+        peaksChart.resize();
+      });
+    }
+  }
+
+  modeButton.addEventListener('click', () => {
+    mode = mode === 'simple' ? 'pro' : 'simple';
+    try {
+      window.localStorage.setItem(MODE_KEY, mode);
+    } catch {
+      // Not fatal: the choice simply will not be remembered.
+    }
+    applyMode();
+  });
+
+  applyMode();
 
   // --- start / stop -------------------------------------------------------
   function collectProtocols(): Protocol[] {
@@ -682,6 +772,9 @@ async function boot(): Promise<void> {
       payload_size: payloadGroup.current,
     };
     untilStoppedInput.checked = true;
+    // The opening run rides out a dropped connection, so a visitor who walks
+    // away comes back to a complete picture instead of one dead run.
+    autoReconnectInput.checked = true;
 
     log.add(
       'info',
@@ -692,7 +785,7 @@ async function boot(): Promise<void> {
       }),
     );
     setText(runNote, t('run.noteAuto'));
-    suite.start(PROTOCOLS, autoParams, true, false);
+    suite.start(PROTOCOLS, autoParams, true, true);
   } catch (error) {
     setText(runNote, t('server.offline'));
     log.add('error', t('log.configError', { detail: describeError(error) }));

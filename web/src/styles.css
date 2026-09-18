@@ -451,6 +451,149 @@ body {
   border-left-color: var(--bad);
 }
 
+/* --------------------------------------------------------------- view modes */
+
+/* Exactly one presentation is on screen at a time. Each card carries both, so
+   switching modes never rebuilds anything and never loses a reading. */
+body.mode-simple .only-pro,
+body.mode-pro .only-simple {
+  display: none;
+}
+
+/* ------------------------------------------------------ plain-language view */
+
+.simple-summary {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.simple-summary.summary-good {
+  color: var(--good);
+}
+
+.simple-summary.summary-warn {
+  color: var(--warn);
+}
+
+.simple-summary.summary-idle {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.simple-about {
+  margin: 8px 0 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+
+.simple-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.simple-table th,
+.simple-table td {
+  padding: 7px 8px;
+  text-align: left;
+  vertical-align: baseline;
+  border-bottom: 1px solid var(--border);
+}
+
+.simple-table tr:last-child th,
+.simple-table tr:last-child td {
+  border-bottom: none;
+}
+
+.simple-table th {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.simple-table td {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.simple-table td.ok {
+  color: var(--good);
+}
+
+.simple-table td.warn {
+  color: var(--warn);
+}
+
+.simple-table td.bad {
+  color: var(--bad);
+}
+
+.simple-pill.simple-good {
+  color: var(--good);
+  border-color: #23543c;
+  background: var(--good-soft);
+}
+
+.simple-pill.simple-warn {
+  color: var(--warn);
+  border-color: #5c4a24;
+  background: var(--warn-soft);
+}
+
+.simple-pill.simple-bad {
+  color: var(--bad);
+  border-color: #5e2a2a;
+  background: var(--bad-soft);
+}
+
+.simple-pill.simple-idle {
+  color: var(--text-faint);
+}
+
+/* The plain-language verdict is a sentence rather than a metric, so it gets
+   more line height and a little more padding than the pro one. */
+.simple-verdict {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 7px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  background: var(--bg-inset);
+  border-left: 3px solid var(--border-strong);
+}
+
+.simple-verdict:empty {
+  display: none;
+}
+
+.simple-verdict.verdict-good {
+  border-left-color: var(--good);
+}
+
+.simple-verdict.verdict-warn {
+  border-left-color: var(--warn);
+}
+
+.simple-verdict.verdict-bad {
+  border-left-color: var(--bad);
+}
+
+/* In the plain view the cards are the whole page, so let them breathe. */
+body.mode-simple .proto-card {
+  padding: 18px;
+}
+
+body.mode-simple .proto-name {
+  font-size: 17px;
+}
+
 /* ------------------------------------------------------------------ charts */
 
 .chart-panel .chart {
@@ -693,5 +836,15 @@ details.chart-panel[open] summary::before {
   .metrics-table td {
     padding: 4px 5px;
     font-size: 12px;
+  }
+
+  .simple-table th,
+  .simple-table td {
+    padding: 5px 4px;
+    font-size: 13px;
+  }
+
+  .simple-summary {
+    font-size: 15px;
   }
 }
