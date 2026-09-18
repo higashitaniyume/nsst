@@ -466,8 +466,22 @@ export class ProtocolCard {
     charts.className = 'proto-charts';
     charts.append(interval.root, throughput.root, peaks.root);
 
-    // Numbers first, then the charts, then the conclusion — in both views.
-    root.append(head, endpoint, about, simple.block, pro, charts, simple.verdict, verdict);
+    // Readings on the left, charts on the right. Each column stacks its own
+    // contents, so a full-width card uses its width instead of leaving a narrow
+    // table adrift in empty space.
+    //
+    // The plain-language verdict goes inside the left column so it sits directly
+    // under the numbers it describes; in the professional view the two tables
+    // already fill that column, so that verdict spans the card instead.
+    const data = document.createElement('div');
+    data.className = 'proto-data';
+    data.append(simple.block, simple.verdict, pro);
+
+    const body = document.createElement('div');
+    body.className = 'proto-body';
+    body.append(data, charts);
+
+    root.append(head, endpoint, about, body, verdict);
 
     this.root = root;
     this.chartSlots = { interval: interval.body, throughput: throughput.body, peaks: peaks.body };

@@ -387,19 +387,14 @@ body {
   border-bottom: none;
 }
 
-/* The label column shrinks to its content and the value sits immediately after
-   it. Right-aligning the value would push it to the far edge of a full-width
-   row, thousands of pixels away from the label it belongs to. */
 .metrics-table th {
-  width: 1%;
-  padding-right: 56px;
   font-weight: 400;
   white-space: nowrap;
   color: var(--text-dim);
 }
 
 .metrics-table td {
-  text-align: left;
+  text-align: right;
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   color: var(--text);
@@ -521,15 +516,13 @@ body.mode-pro .only-simple {
 }
 
 .simple-table th {
-  width: 1%;
-  padding-right: 48px;
   font-weight: 400;
   white-space: nowrap;
   color: var(--text-dim);
 }
 
 .simple-table td {
-  text-align: left;
+  text-align: right;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text);
@@ -609,15 +602,40 @@ body.mode-simple .proto-name {
   font-size: 17px;
 }
 
+/* Only six plain-language rows against a full column of charts, so give them a
+   little more room and keep the left column from looking half abandoned. */
+body.mode-simple .simple-table th,
+body.mode-simple .simple-table td {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+body.mode-simple .simple-verdict {
+  margin-top: 14px;
+}
+
 /* ------------------------------------------------------------------ charts */
 
-/* Each protocol card carries its own charts, one under the other, so a card
-   reads top to bottom: the numbers, then the pictures, then the conclusion. */
+/* A card is two columns: that protocol's readings on the left, its charts on the
+   right. Each column stacks its own contents, so the card uses its width instead
+   of leaving a narrow table adrift in a half-empty row. */
+.proto-body {
+  display: grid;
+  grid-template-columns: minmax(240px, 2fr) minmax(320px, 3fr);
+  gap: 20px;
+  align-items: start;
+  margin-top: 12px;
+}
+
+.proto-data,
+.proto-charts {
+  min-width: 0;
+}
+
 .proto-charts {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: 14px;
 }
 
 .mini-chart {
@@ -869,6 +887,14 @@ details.mini-chart:not([open]) .chart {
 
 /* -------------------------------------------------------------- responsive */
 
+/* Below this the two columns can no longer both hold their content, so the
+   charts drop underneath the readings instead of squeezing. */
+@media (max-width: 980px) {
+  .proto-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 760px) {
   .app {
     padding: 14px 12px 48px;
@@ -888,18 +914,10 @@ details.mini-chart:not([open]) .chart {
     font-size: 12px;
   }
 
-  .metrics-table th {
-    padding-right: 18px;
-  }
-
   .simple-table th,
   .simple-table td {
     padding: 5px 4px;
     font-size: 13px;
-  }
-
-  .simple-table th {
-    padding-right: 16px;
   }
 
   .simple-summary {
