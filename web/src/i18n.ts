@@ -45,7 +45,6 @@ const en: Dict = {
   'proto.websocket': 'WebSocket',
 
   'overview.title': 'Frame interval, all three protocols',
-  'overview.metric': 'Metric',
 
   'table.traffic': 'Connection & traffic',
   'table.timing': 'Timing & gaps',
@@ -190,7 +189,6 @@ const zh: Dict = {
   'proto.websocket': 'WebSocket',
 
   'overview.title': '三种协议帧间隔对比',
-  'overview.metric': '指标',
 
   'table.traffic': '连接与流量',
   'table.timing': '时延与间隔',

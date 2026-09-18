@@ -1,0 +1,17 @@
+fix(web): the top block is a combined chart, not a table
+
+I misread the request. What was wanted at the very top is one line chart
+with all three protocols' frame intervals drawn on the same pair of axes,
+not a table of their readings.
+
+- Removed the OverviewTable from views.ts, along with its i18n key and its
+  "—" handling for an untested protocol.
+- The top panel is now a single MultiChart with one series per protocol in
+  canonical order, in the protocol colours, 200px tall, on the same rolling
+  60-second window as the rest.
+- tick() feeds it one value per protocol on a shared x. A protocol that
+  produced no sample contributes null, and because spanGaps is off its line
+  simply ends there instead of shifting the other two.
+- The per-card charts are unchanged.
+
+Panel carries the heading and the plot only; nothing else.

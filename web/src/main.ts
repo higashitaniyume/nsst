@@ -9,8 +9,7 @@ import type { CloseReason, Message, Transport, TransportCallbacks } from './tran
 import type { ConfigResponse, ConnectionState, Protocol, StreamParams } from './types.js';
 import { PROTOCOLS } from './types.js';
 import { EventLog, NumericChoiceGroup, requireElement, setText } from './ui.js';
-import { OverviewTable, PROTOCOL_COLORS, ProtocolCard } from './views.js';
-import type { OverviewEntry } from './views.js';
+import { PROTOCOL_COLORS, ProtocolCard } from './views.js';
 import { createWebSocketTransport } from './websocket.js';
 
 import 'uplot/dist/uPlot.min.css';
@@ -279,8 +278,8 @@ class Suite {
   private readonly throughputCharts = new Map<Protocol, MultiChart>();
   private readonly peaksCharts = new Map<Protocol, MultiChart>();
 
+  private readonly overviewChart: MultiChart;
   private readonly log: EventLog;
-  private readonly overview: OverviewTable;
   private readonly onRunningChanged: (running: boolean) => void;
 
   private ticker: number | null = null;
@@ -297,8 +296,19 @@ class Suite {
     onRunningChanged: (running: boolean) => void;
   }) {
     this.log = options.log;
-    this.overview = new OverviewTable(options.overview);
     this.onRunningChanged = options.onRunningChanged;
+
+    // The overview plots every protocol on one pair of axes. Series order is the
+    // canonical protocol order, which is the order tick() feeds values in.
+    this.overviewChart = new MultiChart(options.overview, {
+      series: PROTOCOLS.map((protocol) => ({
+        label: t(`proto.${protocol}`),
+        stroke: PROTOCOL_COLORS[protocol],
+      })),
+      format: formatAxisMs,
+      windowSeconds: CHART_WINDOW_SECONDS,
+      height: 200,
+    });
 
     for (const protocol of PROTOCOLS) {
       const card = new ProtocolCard(protocol);
@@ -342,6 +352,7 @@ class Suite {
 
   private allCharts(): MultiChart[] {
     return [
+      this.overviewChart,
       ...this.intervalCharts.values(),
       ...this.throughputCharts.values(),
       ...this.peaksCharts.values(),
@@ -370,26 +381,23 @@ class Suite {
       this.throughputCharts.get(protocol)?.setSeriesLabels([label]);
       this.peaksCharts.get(protocol)?.setSeriesLabels([label]);
     }
-    this.overview.renderLabels();
+    this.overviewChart.setSeriesLabels(PROTOCOLS.map((protocol) => t(`proto.${protocol}`)));
   }
 
   /**
-   * Repaints the overview table and every card from live snapshots.
+   * Repaints every card from live snapshots.
    *
    * This is deliberately separate from {@link tick}: the charts only get a point
    * while a stream is producing samples, but the tables must still be repainted
    * once the last stream settles so the terminal state reaches the screen.
    */
   private paint(now: number): void {
-    const entries: OverviewEntry[] = [];
     for (const protocol of PROTOCOLS) {
       const run = this.runs.get(protocol);
       if (!run) continue;
       const snapshot = run.snapshot(now);
-      entries.push({ protocol, snapshot });
       run.card.update(snapshot, this.params, this.expectedFrames, this.untilStopped, this.running);
     }
-    this.overview.update(entries, this.params);
   }
 
   /**
@@ -412,7 +420,6 @@ class Suite {
 
     for (const chart of this.allCharts()) chart.clear();
     for (const [, card] of this.cards) card.reset();
-    this.overview.reset();
 
     this.runs.clear();
     this.startedAt = performance.now();
@@ -473,19 +480,33 @@ class Suite {
     const now = performance.now();
     const x = (now - this.startedAt) / 1000;
 
+    // The overview needs one value per protocol on the same x, so it is fed
+    // inside the loop rather than per chart. A protocol that produced no sample
+    // this tick contributes null, which ends its line without shifting the
+    // others: spanGaps is off, so the gap is drawn as a gap.
+    const overviewValues: (number | null)[] = [];
+
     for (const protocol of PROTOCOLS) {
       const run = this.runs.get(protocol);
       // sample() returns null once a run has settled, which ends its series.
       const sample = run ? run.sample(now) : null;
+
+      overviewValues.push(sample ? sample.intervalMs : null);
+
       if (!sample) continue;
 
-      // Each chart carries a single protocol, so a settled stream simply stops
-      // adding points instead of leaving a hole on a shared axis.
+      // Each card's charts carry a single protocol, so a settled stream simply
+      // stops adding points instead of leaving a hole on a shared axis.
       this.intervalCharts.get(protocol)?.push(x, [sample.intervalMs]);
       this.throughputCharts.get(protocol)?.push(x, [sample.throughputBps]);
       if (sample.stallMs > 0) {
         this.peaksCharts.get(protocol)?.push(x, [sample.stallMs]);
       }
+    }
+
+    // Extend the overview only while something is still producing samples.
+    if (overviewValues.some((value) => value !== null)) {
+      this.overviewChart.push(x, overviewValues);
     }
 
     // The cards are painted from the snapshots rather than from the chart
@@ -565,7 +586,7 @@ async function boot(): Promise<void> {
 
   const suite = new Suite({
     grid: requireElement('protocol-grid'),
-    overview: requireElement('overview-table'),
+    overview: requireElement('overview-chart'),
     log,
     onRunningChanged: (running) => {
       startButton.disabled = running;
