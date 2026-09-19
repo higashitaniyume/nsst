@@ -90,7 +90,7 @@
 - **C# 服务是唯一的实现** —— `dotnet/src/Nsst.Core` + `dotnet/src/Nsst.Server`；`Directory.Build.props` 开着 `TreatWarningsAsErrors`，构建 **0 警告 0 错误**；`dotnet test` **134 个用例全绿**（Core 53 + Server 81）。
 - **内嵌正文搬家** —— `pkg/protocol/payload.txt` → **`dotnet/src/Nsst.Core/Protocol/payload.txt`**（8699 字节，纯 ASCII），以 `EmbeddedResource` 嵌进 `Nsst.Core`。现在是**唯一一份**。
 - **前端产物搬家** —— `internal/webui/dist` → **`web/dist`**（已被 `.gitignore` 忽略），由 `web/` 里的 `npm run build` 产出，服务端构建时把它内嵌。**构建服务端之前必须先构建前端**，否则嵌进去的是上一次的产物或空目录。
-- **版本注入已接通** —— 版本号只在 `dotnet/Directory.Build.props` 里声明一次（当前 `0.2.2`）；`ServerConfig.ServiceVersion` 在运行时从程序集的 `AssemblyInformationalVersion` 读取，并剥掉 SDK 追加的 `+<sha>` 构建元数据。流水线用 `-p:Version=` 覆盖，**Dockerfile 就是这么做的**，C# 里没有第二份会跟它不一致的版本号。
+- **版本注入已接通** —— 版本号只在 `dotnet/Directory.Build.props` 里声明一次（当前 `0.3.0`）；`ServerConfig.ServiceVersion` 在运行时从程序集的 `AssemblyInformationalVersion` 读取，并剥掉 SDK 追加的 `+<sha>` 构建元数据。流水线用 `-p:Version=` 覆盖，**Dockerfile 就是这么做的**，C# 里没有第二份会跟它不一致的版本号。
 - **构建链路已补齐** —— `Dockerfile`（web → sdk → runtime 三段式）和重写后的 `Makefile` 都在仓库里。Makefile 目标是 `help deps web build run test test-cover fmt fmt-check lint smoke smoke-full docker docker-run docker-smoke clean all`。
 
 > ⚠️ **仍然没做完的两件事**，读后面各节时按这个前提读：

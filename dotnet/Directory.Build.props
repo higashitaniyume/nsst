@@ -21,7 +21,7 @@
       with `-p:Version=` (the Dockerfile does this); ServerConfig reads the
       stamped assembly attribute rather than duplicating the number in C#.
     -->
-    <Version>0.2.2</Version>
+    <Version>0.3.0</Version>
 
     <!-- The streaming hot path must not allocate; these keep it honest. -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

@@ -64,7 +64,7 @@ COPY dotnet/ ./dotnet/
 # to the project file, so it has to be in place before publish.
 COPY --from=web /src/web/dist ./web/dist
 
-ARG VERSION=0.2.2
+ARG VERSION=0.3.0
 
 # The default above mirrors <Version> in dotnet/Directory.Build.props, which is the
 # canonical value; this only applies to a bare `docker build` that passes no
