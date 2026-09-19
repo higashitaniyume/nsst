@@ -14,17 +14,17 @@
 services:
   streamtest:
     # Both build: and image: are set on purpose. Compose tags a built image with
-    # the name below, so `up --build` and `up` agree on what "hyumerin/nsst:0.3.0"
+    # the name below, so `up --build` and `up` agree on what "hyumerin/nsst:0.3.1"
     # means locally. Without --build the published image is pulled when it is not
     # already present, which keeps a plain deploy from recompiling the project.
-    image: hyumerin/nsst:0.3.0
+    image: hyumerin/nsst:0.3.1
 
     build:
       context: .
       dockerfile: Dockerfile
       args:
         # Stamped into the assembly and reported by /api/health and /api/info.
-        VERSION: "0.3.0"
+        VERSION: "0.3.1"
 
     pull_policy: missing
 
