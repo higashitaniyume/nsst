@@ -110,7 +110,10 @@ jobs:
           load: true
           tags: nsst:ci
           build-args: |
-            VERSION=ci
+            # Has to be a valid SemVer. MSBuild writes this into the assembly's
+            # informational version and rejects a bare word like "ci", which is what
+            # the Go build accepted for its -ldflags stamp.
+            VERSION=0.0.0-ci.${{ github.run_number }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
