@@ -44,6 +44,47 @@ public sealed class StreamRunnerTests
     }
 
     /// <summary>
+    /// The frame total is bounded by the grid, so a wait that comes back early cannot
+    /// add a frame.
+    /// </summary>
+    /// <remarks>
+    /// This is the cross-platform case, reproduced on purpose rather than left to the
+    /// machine to reproduce. Windows overshoots the deadline by a timer tick, so the
+    /// old clock-driven loop happened to stop at the right count; Linux returns within
+    /// a fraction of a millisecond of it and emitted one frame too many. The console
+    /// computes its own expected count with the same ceiling formula and draws a
+    /// progress bar from it, so a total that depends on the host timer is a contract
+    /// bug, not a flaky assertion.
+    /// </remarks>
+    [Fact]
+    public async Task DoesNotEmitBeyondTheExpectedFramesWhenTheWaitReturnsEarly()
+    {
+        var clock = new FakeTimeProvider();
+        var parameters = new StreamParams(TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(100), 16);
+        var sink = new RecordingSink();
+
+        var task = StreamRunner.RunAsync(
+            TestLifetime.Never,
+            parameters,
+            FrameEncoder.For(parameters.PayloadSize),
+            sink,
+            null,
+            StreamHooks.None,
+            clock,
+            new EarlyReturningDelayStrategy()).AsTask();
+
+        var step = TimeSpan.FromTicks(Math.Max(1, parameters.Interval.Ticks / 10));
+        var budget = (int)(parameters.Duration.Ticks / step.Ticks) + 64;
+
+        await AdvanceUntilAsync(clock, () => task.IsCompleted, step, budget);
+        var result = await task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(EndReason.Completed, result.Reason);
+        Assert.Equal(parameters.ExpectedFrames, (long)result.Frames);
+        Assert.Equal(parameters.ExpectedFrames, (long)sink.FrameCount);
+    }
+
+    /// <summary>
     /// The first frame must go out at t=0 so the client can measure first frame
     /// latency. With a fake clock this is exact: one frame exists while zero time has
     /// passed, which a real-clock test could only describe as "quickly".
@@ -233,5 +274,29 @@ internal sealed class StallingSink : IStreamSink
 
         _written++;
         return ValueTask.CompletedTask;
+    }
+}
+
+/// <summary>
+/// A wait primitive that comes back before the requested delay has elapsed.
+/// </summary>
+/// <remarks>
+/// Stands in for the behaviour that made the frame count platform dependent: a wait
+/// landing just inside the deadline rather than just past it. The shortfall is a
+/// fraction of the interval rather than a fraction of a tick, because a fake clock is
+/// advanced in visible steps and a one-tick undershoot would be indistinguishable from
+/// landing exactly on the boundary.
+/// </remarks>
+internal sealed class EarlyReturningDelayStrategy : IDelayStrategy
+{
+    public async ValueTask DelayAsync(TimeSpan delay, TimeProvider timeProvider, CancellationToken cancellationToken)
+    {
+        var early = TimeSpan.FromTicks(delay.Ticks / 2);
+        if (early > TimeSpan.Zero)
+        {
+            delay -= early;
+        }
+
+        await Task.Delay(delay, timeProvider, cancellationToken).ConfigureAwait(false);
     }
 }

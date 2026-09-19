@@ -31,6 +31,15 @@ public static class StreamRunner
         // clock because that is what gets logged and what server_time derives from.
         var deadline = pacer.Now + parameters.Duration;
 
+        // The frame total is decided by the grid, not by the wall clock. Relying on
+        // "has the deadline passed?" alone left the count dependent on how closely the
+        // delay primitive lands on the boundary: Windows overshoots by a timer tick and
+        // stopped at ceil(Duration/Interval) frames, while Linux landed just inside the
+        // deadline and emitted one more. The console draws its progress bar from
+        // ExpectedFrames, so the two have to agree on every platform. The deadline check
+        // below stays as the safety net for a machine too slow to keep the grid.
+        var totalFrames = (ulong)parameters.ExpectedFrames;
+
         var buffer = new byte[encoder.RecommendedBufferSize];
         var token = lifetime.Cancellation;
 
@@ -107,6 +116,12 @@ public static class StreamRunner
             counters?.IncrementFramesSent();
             counters?.AddBytesSent((ulong)written);
             hooks.OnFrame?.Invoke(sequence, written);
+
+            if (frames >= totalFrames)
+            {
+                reason = EndReason.Completed;
+                break;
+            }
         }
 
         return new StreamResult
