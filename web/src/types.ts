@@ -1,12 +1,12 @@
 /**
- * Wire types shared with the Go backend.
+ * Wire types shared with the server.
  *
  * The frame model is deliberately identical across all three protocols, so a
  * measurement taken over HTTP streaming is directly comparable with the same
  * measurement taken over SSE or WebSocket.
  */
 
-/** A single frame as produced by pkg/protocol.Frame on the server. */
+/** A single frame as produced by the server's frame encoder. */
 export interface StreamFrame {
   /** 1-based, contiguous within one connection. */
   sequence: number;
@@ -77,7 +77,7 @@ export interface HealthResponse {
   uptime_seconds: number;
 }
 
-/** Mirrors internal/api.clientResponse, as returned by /api/client. */
+/** Mirrors the server's client view, as returned by /api/client. */
 export interface ClientResponse {
   /** Address to display; `ip_source` names where it came from. */
   ip: string;
@@ -99,7 +99,7 @@ export interface ClientResponse {
   server_time: number;
 }
 
-/** Mirrors internal/metrics.Snapshot, as returned by /api/metrics. */
+/** Mirrors the server's counters, as returned by /api/metrics. */
 export interface MetricsResponse {
   active_streams: number;
   streams_started: number;

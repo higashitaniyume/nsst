@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A throwaway measurement harness, not part of the shipped server. It exists to answer one
+    question with numbers rather than reasoning:
+
+      .NET's Task.Delay and Thread.Sleep are quantised to the 15.625 ms Windows system tick,
+      so the C# port cannot honour interval=10ms. Go can, because its runtime waits on a
+      high-resolution waitable timer instead. Can .NET reach the same primitive?
+
+    Run it from dotnet/spike/TimerResolution with: dotnet run -c Release
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Nsst.Spike.TimerResolution</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

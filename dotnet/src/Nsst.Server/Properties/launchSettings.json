@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "Nsst.Server": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:14625;http://localhost:14626"
+    }
+  }
+}

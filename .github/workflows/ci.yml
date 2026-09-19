@@ -16,35 +16,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  DOTNET_VERSION: "10.0.x"
   NODE_VERSION: "22"
 
 jobs:
-  go:
-    name: Go
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Check gofmt
-        run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "::error::these files are not gofmt-clean:"
-            echo "$unformatted"
-            exit 1
-          fi
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: Tests (race detector)
-        run: go test -race -count=1 ./...
-
   web:
     name: Frontend
     runs-on: ubuntu-latest
@@ -66,13 +41,63 @@ jobs:
       - name: Assert the bundle was emitted
         run: |
           set -euo pipefail
-          test -f internal/webui/dist/index.html
-          ls -l internal/webui/dist internal/webui/dist/assets
+          test -f web/dist/index.html
+          ls -l web/dist web/dist/assets
+
+      # The server embeds this directory at compile time, so the next job cannot
+      # build a correct server without it. Handing it over as an artifact is what
+      # makes that ordering visible instead of an implicit assumption.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 1
+
+  dotnet:
+    name: .NET
+    runs-on: ubuntu-latest
+    needs: [web]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      # Keyed on the project files, since the repository uses no lock file.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/**/*.csproj', 'dotnet/Directory.Build.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # Must happen before build/test: Nsst.Server.csproj embeds web/dist as an
+      # assembly resource. Without it the build still succeeds and the tests
+      # still pass, but they pass against a server with no console in it.
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: Restore
+        run: dotnet restore dotnet/Nsst.slnx
+
+      # A real gate rather than a permanently red one: the tree is format-clean.
+      - name: Check formatting
+        run: dotnet format dotnet/Nsst.slnx --verify-no-changes --no-restore
+
+      # TreatWarningsAsErrors is on in Directory.Build.props, so this is also the
+      # static-analysis step; there is no separate lint tool to run.
+      - name: Build
+        run: dotnet build dotnet/Nsst.slnx -c Release --no-restore --nologo
+
+      - name: Test
+        run: dotnet test dotnet/Nsst.slnx -c Release --no-build --nologo
 
   image:
     name: Container smoke test
     runs-on: ubuntu-latest
-    needs: [go, web]
+    needs: [dotnet]
     steps:
       - uses: actions/checkout@v4
 
@@ -104,6 +129,8 @@ jobs:
 
           echo "health: $(curl -fsS http://localhost:8080/api/health)"
 
+          # duration=1s at interval=250ms means t=0,250,500,750 -- four frames,
+          # because t=1000 is not < duration.
           frames=$(curl -fsSN "http://localhost:8080/api/stream/http?duration=1&interval=250&payload_size=16" | wc -l)
           echo "http frames: ${frames} (expected 4)"
           test "${frames}" -eq 4

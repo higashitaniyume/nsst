@@ -1,19 +1,27 @@
 # Keep the build context small and deterministic. Everything excluded here is
 # either generated inside the image or irrelevant to the build.
+#
+# The context is the repository root: the image needs web/ to build the console
+# and dotnet/ to compile the server that embeds it.
 
 .git
 .gitignore
 .github
 
-# Build output: the console is rebuilt inside the image from source.
+# Build output. The console is rebuilt inside the image from web/ sources, and
+# anything under bin/ is a host-side publish.
 bin/
-internal/webui/dist/
-
-# Host-installed frontend dependencies must never leak into the image; the
-# web stage runs `npm ci` against the lockfile instead.
-web/node_modules/
 web/dist/
+
+# Host-installed frontend dependencies must never leak into the image; the web
+# stage runs `npm ci` against the lockfile instead.
+web/node_modules/
 npm-debug.log*
+
+# Host .NET build output. The build stage restores and compiles from source, so
+# a stale host obj/ must not be copied in.
+dotnet/**/bin/
+dotnet/**/obj/
 
 # Local tooling and editor state.
 .vscode/

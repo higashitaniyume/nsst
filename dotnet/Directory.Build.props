@@ -1,0 +1,50 @@
+<Project>
+
+  <!--
+    Shared build settings for the server.
+
+    This is the only implementation. The Go server that used to live in cmd/,
+    internal/ and pkg/ has been removed along with its toolchain, so there is no
+    longer a second implementation to stay compatible with: the contract this
+    code must keep is the one the web console actually consumes, plus the three
+    streaming wire formats.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!--
+      Reported by /api/health and /api/info. Overridable from a build pipeline
+      with `-p:Version=` (the Dockerfile does this); ServerConfig reads the
+      stamped assembly attribute rather than duplicating the number in C#.
+    -->
+    <Version>0.2.2</Version>
+
+    <!-- The streaming hot path must not allocate; these keep it honest. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- The service formats timestamps itself; culture-aware formatting would
+         make the wire output depend on the host locale. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!--
+      These three are already the defaults: the Web SDK turns on server GC, and
+      background (concurrent) GC comes with it. They are pinned anyway because
+      this service measures pacing jitter — a blocking gen2 collection during a
+      run would be reported as the network's fault rather than the tool's — and
+      pinning means an SDK default change cannot silently move that error into
+      the product. Confirmed in the generated runtimeconfig.json, not assumed.
+    -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+</Project>

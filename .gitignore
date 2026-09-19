@@ -6,19 +6,21 @@
 coverage/
 
 # --- generated frontend bundle ---
-# internal/webui/dist is COMMITTED on purpose. The package uses
-# `//go:embed all:dist`, which fails to compile when the directory is missing,
-# so a Go-only checkout would break `go build ./...` and `go test ./...`.
-# `npm run build` regenerates these files; the Docker build ignores the
-# committed copy entirely and rebuilds the console from web/ sources.
-/web/node_modules/
+# `npm run build` writes vite's outDir here, and the server embeds that directory
+# as an assembly resource. It is a build artifact rather than a source file, so
+# it is not committed: run `npm run build` (or `make build`) before publishing
+# the server, or the published image has no console in it.
 /web/dist/
+/web/node_modules/
 npm-debug.log*
 pnpm-debug.log*
 
 # --- editors and OS noise ---
 .vscode/
 .idea/
+# Visual Studio's own state: solution caches, .suo, Copilot symbol databases and
+# test logs. Regenerated on open, so it is never worth committing.
+.vs/
 *.swp
 .DS_Store
 Thumbs.db
@@ -27,3 +29,12 @@ Thumbs.db
 .env
 .env.*
 docker-compose.override.yml
+
+# --- .NET build output (dotnet/) ---
+# These have to be spelled out: every rule above is anchored to the repository
+# root, so `/bin/` does not reach into dotnet/, and nothing here covers `obj/`
+# at all. Without them `dotnet/**/obj/project.assets.json` and the compiled
+# assemblies are untracked-but-addable build output.
+dotnet/**/bin/
+dotnet/**/obj/
+*.user

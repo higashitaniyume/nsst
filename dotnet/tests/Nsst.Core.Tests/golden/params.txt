@@ -1,0 +1,61 @@
+# NSST query parameter golden output.
+# Frozen reference data; do not edit by hand.
+# The generator that produced this file was deleted together with the Go tree,
+# so it cannot be regenerated -- see golden/README.md.
+#
+#   ok	<query>	duration_ms=<n>	interval_ms=<n>	payload_size=<n>	expected_frames=<n>
+#   err	<query>	param=<n>	value=<v>	message=<full error text>
+#
+# The query on each line is the raw (already percent-encoded) query string, so the
+# decoding step is compared too. message= is always last because it contains spaces.
+#
+ok		duration_ms=60000	interval_ms=100	payload_size=80	expected_frames=600
+ok	duration=	duration_ms=60000	interval_ms=100	payload_size=80	expected_frames=600
+ok	interval=	duration_ms=60000	interval_ms=100	payload_size=80	expected_frames=600
+ok	payload_size=	duration_ms=60000	interval_ms=100	payload_size=80	expected_frames=600
+ok	duration=&interval=&payload_size=	duration_ms=60000	interval_ms=100	payload_size=80	expected_frames=600
+ok	duration=%20	duration_ms=60000	interval_ms=100	payload_size=80	expected_frames=600
+ok	duration=%209%20	duration_ms=9000	interval_ms=100	payload_size=80	expected_frames=90
+ok	unknown=1	duration_ms=60000	interval_ms=100	payload_size=80	expected_frames=600
+ok	duration	duration_ms=60000	interval_ms=100	payload_size=80	expected_frames=600
+ok	interval	duration_ms=60000	interval_ms=100	payload_size=80	expected_frames=600
+ok	payload_size	duration_ms=60000	interval_ms=100	payload_size=80	expected_frames=600
+ok	duration=1	duration_ms=1000	interval_ms=100	payload_size=80	expected_frames=10
+ok	duration=5	duration_ms=5000	interval_ms=100	payload_size=80	expected_frames=50
+ok	duration=3600	duration_ms=3600000	interval_ms=100	payload_size=80	expected_frames=36000
+err	duration=0	param=duration	value=0	message=parameter "duration": must be a positive number of seconds (got "0")
+err	duration=-1	param=duration	value=-1	message=parameter "duration": must be a positive number of seconds (got "-1")
+err	duration=3601	param=duration	value=3601	message=parameter "duration": must not exceed 3600 seconds (got "3601")
+err	duration=abc	param=duration	value=abc	message=parameter "duration": must be an integer (got "abc")
+err	duration=1.5	param=duration	value=1.5	message=parameter "duration": must be an integer (got "1.5")
+ok	duration=+5	duration_ms=5000	interval_ms=100	payload_size=80	expected_frames=50
+err	duration=9223372036	param=duration	value=9223372036	message=parameter "duration": must not exceed 3600 seconds (got "9223372036")
+err	duration=9223372036854775808	param=duration	value=9223372036854775808	message=parameter "duration": must be an integer (got "9223372036854775808")
+ok	interval=10	duration_ms=60000	interval_ms=10	payload_size=80	expected_frames=6000
+err	interval=9	param=interval	value=9	message=parameter "interval": must be at least 10 milliseconds (got "9")
+ok	interval=60000	duration_ms=60000	interval_ms=60000	payload_size=80	expected_frames=1
+err	interval=60001	param=interval	value=60001	message=parameter "interval": must not exceed 60000 milliseconds (got "60001")
+err	interval=0	param=interval	value=0	message=parameter "interval": must be a positive number of milliseconds (got "0")
+err	interval=-1	param=interval	value=-1	message=parameter "interval": must be a positive number of milliseconds (got "-1")
+err	interval=abc	param=interval	value=abc	message=parameter "interval": must be an integer (got "abc")
+err	interval=9223372036854	param=interval	value=9223372036854	message=parameter "interval": must not exceed 60000 milliseconds (got "9223372036854")
+err	interval=99999999999999999999	param=interval	value=99999999999999999999	message=parameter "interval": must be an integer (got "99999999999999999999")
+ok	payload_size=0	duration_ms=60000	interval_ms=100	payload_size=0	expected_frames=600
+ok	payload_size=1	duration_ms=60000	interval_ms=100	payload_size=1	expected_frames=600
+ok	payload_size=80	duration_ms=60000	interval_ms=100	payload_size=80	expected_frames=600
+ok	payload_size=1048576	duration_ms=60000	interval_ms=100	payload_size=1048576	expected_frames=600
+err	payload_size=1048577	param=payload_size	value=1048577	message=parameter "payload_size": must not exceed 1048576 bytes (got "1048577")
+err	payload_size=-1	param=payload_size	value=-1	message=parameter "payload_size": must not be negative (got "-1")
+err	payload_size=abc	param=payload_size	value=abc	message=parameter "payload_size": must be an integer (got "abc")
+err	payload_size=99999999999999999999	param=payload_size	value=99999999999999999999	message=parameter "payload_size": must be an integer (got "99999999999999999999")
+ok	duration=5&interval=250	duration_ms=5000	interval_ms=250	payload_size=80	expected_frames=20
+err	duration=7&interval=3	param=interval	value=3	message=parameter "interval": must be at least 10 milliseconds (got "3")
+ok	duration=2&interval=1000	duration_ms=2000	interval_ms=1000	payload_size=80	expected_frames=2
+ok	duration=3&interval=1000	duration_ms=3000	interval_ms=1000	payload_size=80	expected_frames=3
+ok	duration=10&interval=250&payload_size=100	duration_ms=10000	interval_ms=250	payload_size=100	expected_frames=40
+ok	duration=1&interval=10&payload_size=0	duration_ms=1000	interval_ms=10	payload_size=0	expected_frames=100
+ok	duration=3600&interval=60000&payload_size=1048576	duration_ms=3600000	interval_ms=60000	payload_size=1048576	expected_frames=60
+ok	duration=1&interval=60000	duration_ms=1000	interval_ms=60000	payload_size=80	expected_frames=1
+ok	duration=10&duration=20	duration_ms=10000	interval_ms=100	payload_size=80	expected_frames=100
+ok	interval=100&interval=200	duration_ms=60000	interval_ms=100	payload_size=80	expected_frames=600
+ok	payload_size=100&payload_size=200	duration_ms=60000	interval_ms=100	payload_size=100	expected_frames=600

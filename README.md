@@ -13,7 +13,7 @@
 | Server-Sent Events | `/api/stream/sse` | `text/event-stream`，`id:` + `event:` + `data:` |
 | WebSocket | `/api/stream/ws` | 文本帧，一条消息一帧 |
 
-单个 Go 二进制同时提供 Web 前端、REST API 和三个流式端点。没有数据库、没有 Redis、没有外部依赖、没有账号系统。
+单个可执行程序同时提供 Web 前端、REST API 和三个流式端点。没有数据库、没有 Redis、没有账号系统；前端被编译进程序集，所以发布出来的就是一个自包含的服务端。
 
 ---
 
@@ -62,7 +62,7 @@
 ### 方式一：Docker（推荐）
 
 ```bash
-# 构建（多阶段：Node 构建前端 → Go 编译并内嵌前端 → Alpine 运行时）
+# 构建（多阶段：Node 构建前端 → .NET SDK 发布服务端并内嵌前端 → Alpine 运行时）
 docker build -t hyumerin/nsst .
 
 # 运行
@@ -86,18 +86,20 @@ docker compose down
 NSST_PORT=60000 docker compose up -d
 ```
 
-Compose 还把**正文文件挂进容器**，用来替换内嵌在二进制里的那份：
+Compose 还把**正文文件挂进容器**，用来替换编译进程序集里的那份：
 
 ```yaml
 environment:
   PAYLOAD_FILE: "/data/payload.txt"
 volumes:
-  - ./pkg/protocol/payload.txt:/data/payload.txt:ro
+  - ./dotnet/src/Nsst.Core/Protocol/payload.txt:/data/payload.txt:ro
 ```
 
 想换成自己的文字，把左边改成你的文件即可，**不需要重新构建镜像**，`docker compose restart streamtest` 就会生效（正文在启动时读入一次）。文件读不了会直接启动失败并说明原因——不会退回内嵌正文让你以为换成功了。直接 `docker run` 的话用 `-e PAYLOAD_FILE=... -v ...` 达到同样效果。
 
-镜像约 21 MB，进程以非 root（uid 10001）运行，自带 `HEALTHCHECK`。
+进程以非 root（uid 10001）运行，自带 `HEALTHCHECK`。
+
+> **镜像体积未测量。** 从 Go 换到框架依赖发布的 ASP.NET Core 之后，镜像必然比原来的 Go 静态二进制大得多（运行时本身就有几十 MB）。这里**不写一个没有量过的数字**。构建环境当前没有 Docker 守护进程，所以这份 Dockerfile 也**还没有真正构建过**——第一次 `make docker` 时请留意。
 
 构建 amd64 + arm64 双架构镜像：
 
@@ -105,19 +107,19 @@ volumes:
 docker buildx build --platform linux/amd64,linux/arm64 -t hyumerin/nsst --push .
 ```
 
-> **构建为什么快**：`web` 和 `build` 两个阶段固定在 `$BUILDPLATFORM` 上执行。前端产物和 Go 二进制都与宿主架构无关（`CGO_ENABLED=0`），所以它们**只在原生架构上跑一次**，再由 Go 交叉编译出目标架构——构建 arm64 镜像时 `npm` 和 Go 编译器都不会跑在 QEMU 模拟里。Go 的编译缓存和模块缓存用 BuildKit cache mount 挂载，改了代码也只重新编译受影响的包，而不是整个项目。
+> **构建为什么快**：`web` 和 `build` 两个阶段固定在 `$BUILDPLATFORM` 上执行。前端产物是一份 JS bundle；`dotnet publish` 产出的是框架依赖的 IL（`Nsst.Server.dll` + `deps.json`），与架构无关，所以两者都**只在原生架构上跑一次**，构建 arm64 镜像时 `npm` 和 .NET 编译器都不会跑在 QEMU 模拟里。也正因为如此，publish 没有传 `-r`，并关掉了原生启动器（见 Dockerfile 里的 `UseAppHost=false`），镜像里不会出现一个架构不对的可执行文件。NuGet 包缓存用 BuildKit cache mount 挂载。
 
 ### 方式二：本地开发
 
-需要 Go 1.24+ 和 Node 18+。
+需要 .NET 10 SDK 和 Node 18+。
 
 ```bash
-# 1. 构建前端（产物写进 internal/webui/dist，会被 go:embed 打包进二进制）
+# 1. 构建前端（产物写进 web/dist，发布服务端时会被内嵌进程序集）
 cd web && npm install && npm run build && cd ..
 
-# 2. 构建并启动后端
-go build -o bin/streamtest ./cmd/server
-./bin/streamtest
+# 2. 发布并启动服务端
+dotnet publish dotnet/src/Nsst.Server/Nsst.Server.csproj -c Release -o bin/publish
+dotnet bin/publish/Nsst.Server.dll
 ```
 
 打开 **http://localhost:8080**。
@@ -126,15 +128,15 @@ go build -o bin/streamtest ./cmd/server
 
 ```bash
 # 终端 1
-go run ./cmd/server        # :8080
+dotnet run --project dotnet/src/Nsst.Server   # :8080
 
 # 终端 2
 cd web && npm run dev      # :5173，/api 已代理到 8080（含 WebSocket）
 ```
 
-访问 http://localhost:5173。注意：`go build` 不会重新打包前端，改了 TS 必须重跑 `npm run build`。
+访问 http://localhost:5173。注意：**发布服务端不会重新构建前端**，改了 TS 必须重跑 `npm run build`。顺序不能反——前端产物是在 `dotnet publish` 时被内嵌的，先发布再构建前端的话，那个发布产物里没有界面。
 
-> **关于 `internal/webui/dist`**：这个目录是 `npm run build` 的产物，但**被提交进仓库**。原因是 `//go:embed all:dist` 在目录不存在时会直接编译失败，如果不提交，单纯 clone 下来跑 `go build ./...` 或 `go test ./...` 会报 `pattern all:dist: no matching files found`。Docker 构建会忽略这份提交内容并从 `web/` 源码重新生成。
+> **关于 `web/dist`**：这是 `npm run build` 的产物，**不进仓库**（`.gitignore` 里忽略）。它必须在发布服务端之前存在，否则发布出来的服务端没有前端——这也是 `make build` 先跑 `web` 再跑 `publish` 的原因。
 
 ---
 
@@ -484,7 +486,7 @@ ws.onclose = (e) => console.log('closed', e.code, e.reason, 'frames=' + n);
 
 ### 负载内容
 
-`payload_size > 0` 时，`payload` 是 [`pkg/protocol/payload.txt`](pkg/protocol/payload.txt) 里那篇英文说明文的一段，不是重复的填充字符。每个流自己持有一个游标，每帧往后走一段，走到文章末尾就**绕回开头**接着发，所以测试跑多久都不会把内容发完 —— 这也是它和「发一个固定大响应」的区别。
+`payload_size > 0` 时，`payload` 是 [`dotnet/src/Nsst.Core/Protocol/payload.txt`](dotnet/src/Nsst.Core/Protocol/payload.txt) 里那篇英文说明文的一段，不是重复的填充字符。每个流自己持有一个游标，每帧往后走一段，走到文章末尾就**绕回开头**接着发，所以测试跑多久都不会把内容发完 —— 这也是它和「发一个固定大响应」的区别。
 
 默认 80 字节，大约是一行终端：小步快跑更像真实的流式接口，前端也才有连续的文本可以显示。
 
@@ -504,7 +506,7 @@ ws.onclose = (e) => console.log('closed', e.code, e.reason, 'frames=' + n);
 
 文档可以是任意 UTF-8。多字节字符会被整字处理：一帧切到最后一个**完整字符**为止，所以中文字档请求 20 字节时，实际发的是 18 字节（6 个汉字），帧里的 `payload_size` 如实写 18。客户端也按 UTF-8 **字节数**校验，而不是 JavaScript 的字符数——两者对汉字并不相等，混淆就会把正常的流报成校验失败。
 
-内嵌的那篇是纯 ASCII，走的是免对齐的快路径（每帧恰好 `payload_size` 字节），这个性质由 `pkg/protocol` 的测试守着。
+内嵌的那篇是纯 ASCII，走的是免对齐的快路径（每帧恰好 `payload_size` 字节），这个性质由 `Nsst.Core.Tests` 的 `PayloadDocumentTests` 守着。
 
 ---
 
@@ -538,7 +540,7 @@ ws.onclose = (e) => console.log('closed', e.code, e.reason, 'frames=' + n);
 
 `fetch` + `ReadableStream` 读取 chunked 响应，自己按 `\n` 切帧。之所以不用 `EventSource`，是因为 NDJSON 需要对 chunk 边界有完全控制权，而且要在服务端 flush 的瞬间就拿到帧，而不是等整个响应结束。
 
-每写一帧后调用 `ResponseController.Flush()`，并对这一帧设置写超时（`SetWriteDeadline`）。客户端断开时 `r.Context()` 被取消，写入返回错误，goroutine 立即退出。
+服务端每写一帧后 `Stream.FlushAsync()`，并给这一帧套一个独立的写超时（`FrameWriteTimeout`：一帧一个 `CancellationTokenSource`）。客户端断开时 `HttpContext.RequestAborted` 被取消，写入抛出，发帧循环随即退出。超时和「对端断开」分属两种异常，用异常过滤器区分，所以日志里能看出到底是哪一种。
 
 ### SSE
 
@@ -548,13 +550,13 @@ ws.onclose = (e) => console.log('closed', e.code, e.reason, 'frames=' + n);
 
 ### WebSocket
 
-`github.com/coder/websocket`。协议细节：
+ASP.NET Core 自带的 `WebSocket`（`context.WebSockets.AcceptWebSocketAsync()`）。协议细节：
 
-- 禁用压缩（`CompressionDisabled`），避免压缩引入额外延迟影响测量
+- 不开压缩：ASP.NET Core 只有在显式配置 `DangerousDeflateOptions` 时才协商 `permessage-deflate`，这里没配，所以不会引入压缩延迟影响测量
 - 不协商任何子协议，所以响应里 `Sec-WebSocket-Extensions` 为空
-- 服务端用 `CloseRead` 起一个后台读取器，以便**立刻感知客户端断开**，而不是等下一次写入才发现
-- 每帧写入都带独立的 `context.WithTimeout`
-- 正常结束发送关闭码 `1000` + `running completed`；服务端关停发 `1001`；写失败发 `1011`
+- 服务端另起一个读取任务（`ReceiveAsync`），以便**立刻感知客户端断开**，而不是等下一次写入才发现
+- 每帧写入都带独立的超时
+- 正常结束发送关闭码 `1000` + `stream completed`；服务端关停发 `1001` + `server shutting down`；写失败发 `1011` + `stream write failure`
 - 关闭时先走优雅关闭握手，2 秒内没完成就 `CloseNow()` 强制断开
 
 一个容易踩的坑：WebSocket 升级后 `r.Context()` 就不再可用了，所以 WebSocket 处理器用 `context.Background()` 去申请流配额。
@@ -609,23 +611,28 @@ ws.onclose = (e) => console.log('closed', e.code, e.reason, 'frames=' + n);
 
 ```
 NSST/
-├── cmd/server/main.go            # 启动、信号处理、优雅关闭
-├── internal/
-│   ├── api/                      # 路由、REST 处理器（含 /api/client）、CORS
-│   ├── config/                   # 环境变量加载与校验
-│   ├── httpstream/               # HTTP NDJSON 处理器
-│   ├── httpx/                    # 错误信封、CORS、panic 恢复、客户端地址提取
-│   ├── metrics/                  # 服务端原子计数器
-│   ├── sse/                      # SSE 处理器
-│   ├── stream/                   # 核心：pacing、生命周期、配额、结果分类
-│   ├── testsupport/              # 测试用服务器脚手架
-│   ├── websocket/                # WebSocket 处理器
-│   └── webui/                    # go:embed 前端 + 静态文件服务
-│       └── dist/                 # npm run build 的产物（已提交，见上文说明）
-├── pkg/protocol/                 # 帧编解码（对外可复用）
-│   ├── payload.txt               # 内嵌的流式正文（可用 PAYLOAD_FILE 替换）
-│   └── payload.go                # 正文切分、JSON 转义、外部文件加载
+├── dotnet/
+│   ├── Directory.Build.props     # 共享构建设置：版本号、GC、警告即错误
+│   ├── Nsst.slnx
+│   ├── src/
+│   │   ├── Nsst.Core/            # 帧编解码与流式核心（不依赖 ASP.NET，可单独复用）
+│   │   │   ├── Protocol/         # 帧编码、字节写入、正文切分与转义
+│   │   │   │   └── payload.txt   # 内嵌的流式正文（可用 PAYLOAD_FILE 替换）
+│   │   │   ├── Streaming/        # pacer、生命周期、配额、结果分类
+│   │   │   └── Metrics/          # 服务端原子计数器
+│   │   └── Nsst.Server/          # ASP.NET Core 宿主
+│   │       ├── Api/              # 路由表与 5 个 REST 端点
+│   │       ├── Http/             # 错误信封、CORS、客户端地址提取
+│   │       ├── Streaming/        # 三协议端点
+│   │       ├── WebUi/            # 内嵌前端 + 静态文件服务
+│   │       ├── ServerConfig.cs   # 环境变量加载与校验
+│   │       └── Program.cs        # 管线装配与端点注册
+│   └── tests/
+│       ├── Nsst.Core.Tests/      # 53 个用例
+│       │   └── golden/           # 冻结的帧与参数基准数据
+│       └── Nsst.Server.Tests/    # 81 个用例
 ├── web/
+│   ├── dist/                     # npm run build 的产物（不进仓库，发布时被内嵌）
 │   ├── index.html
 │   ├── public/favicon.svg
 │   ├── src/
@@ -644,15 +651,15 @@ NSST/
 │   │   ├── api.ts                # REST 调用
 │   │   ├── ui.ts                 # DOM 辅助与事件日志
 │   │   ├── format.ts             # 格式化
-│   │   ├── types.ts              # 与后端共享的类型
+│   │   ├── types.ts              # 与服务端共享的类型
 │   │   └── styles.css
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── vite.config.ts
-├── Dockerfile                    # 三阶段构建
+├── docs/                         # 迁移与选型的决策记录
+├── Dockerfile                    # 三阶段构建（Node → .NET SDK → Alpine 运行时）
 ├── docker-compose.yml
 ├── Makefile
-├── go.mod / go.sum
 └── LICENSE
 ```
 
@@ -663,43 +670,46 @@ NSST/
 ### 运行
 
 ```bash
-go test ./...                  # 全量单测
-go test -race -count=1 ./...   # 竞态检测（长连接必跑）
-go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
-gofmt -l .                     # 应无输出
-go vet ./...                   # 应无输出
+dotnet test dotnet/Nsst.slnx -c Release              # 134 个用例
+dotnet test dotnet/Nsst.slnx -c Release --list-tests # 只列出，不执行
+dotnet format dotnet/Nsst.slnx --verify-no-changes   # 格式检查，应无输出
 ```
 
 或者用 Makefile：
 
 ```bash
-make test          # go test ./...
-make test-race     # 竞态检测
-make lint          # gofmt 检查 + go vet
+make test          # 全量单测
+make test-cover    # 带覆盖率采集
+make fmt-check     # 格式检查
+make lint          # 格式检查 + 警告即错误的构建
 make smoke         # 对已运行的服务做三协议冒烟测试
+make smoke-full    # 冒烟测试 + 全量单测（WebSocket 由单测覆盖，curl 测不了）
 ```
 
 ### 覆盖情况
 
-89 个测试函数，12 个测试文件：
+**134 个用例**，分两个项目。`Nsst.Core.Tests` 测不依赖 Web 服务器的核心逻辑，`Nsst.Server.Tests` 用 `WebApplicationFactory` 起真实管线测 HTTP 面：
 
-| 包 | 数量 | 重点 |
+| 测试类 | 用例 | 重点 |
 | --- | --- | --- |
-| `pkg/protocol` | 19 | 帧编解码、字节级比对、`payload_size=0` 的 3 字段形式、编码器缓存、正文环绕、换行转义、多字节字符不被切开、外部文件加载的各种失败 |
-| `internal/stream` | 25 | pacer 不漂移/不补发、参数边界、写错误分类、配额、排空、强制关闭 |
-| `internal/api` | 17 | 全部端点（含 `/api/client`、全部 GET 端点的 405）、404、三协议非法参数、并发上限 503、CORS 四种配置 |
-| `internal/httpx` | 4 | 客户端地址的来源优先级、端口/方括号/`::ffff:` 归一化、伪造头回退到套接字对端、`X-Forwarded-For` 链路 |
-| `internal/httpstream` | 7 | 响应头、逐帧结构、首帧立刻到达、客户端断开、空负载 |
-| `internal/sse` | 5 | 事件格式、开场注释、心跳、断开 |
-| `internal/websocket` | 7 | 握手、帧序、时长、正常关闭、异常断开、并发上限、**goroutine 泄漏** |
-| `internal/config` | 5 | 默认值、覆盖、非法值、夹取、空值 |
+| `GoldenEncoderTests` | 2 | 逐帧字节与 frozen 基准数据比对、内嵌正文与基准数据的哈希一致 |
+| `PayloadDocumentTests` | 11 | 正文切分与环绕、JSON 转义集合、多字节字符不被切开、外部文件加载的各种失败 |
+| `ProtocolTests` | 8 | `payload_size=0` 时的 3 字段形式、编码器缓存复用、字节写入边界 |
+| `PacerTests` | 5 | pacer 不漂移、不补发、迟到后的重对齐 |
+| `ParamsParserTests` | 11 | 参数边界、错误文案逐字比对（这些文案是运维会写进脚本的契约） |
+| `StreamManagerTests` | 10 | 配额租约、排空、强制关闭、并发上限 |
+| `StreamRunnerTests` | 6 | 首帧 t=0、发帧主循环、写错误分类 |
+| `RoutingTests` | 17 | 路由表与端点漂移守卫、HEAD 语义、尾部斜杠 405（且**不开流**）、404 与 SPA 回退 |
+| `ServerConfigTests` | 18 | 默认值、覆盖、非法值、夹取、空值 |
+| `WireFormatTests` | 44 | 5 个 REST 响应体的字段名与类型、协议串归一化、MIME、CORS、客户端地址来源 |
 
 ### 特别关注的几项
 
-- **goroutine 泄漏**：WebSocket 测试跑 8 个会话后对比 goroutine 基线，容差 4
-- **客户端断开**：三种协议都验证断开后服务端立即释放配额和 goroutine
+- **流泄漏**：`ActiveStreams` 与 `StreamsStarted` 在拒绝路径（错误的 HEAD、尾部斜杠、非法参数）上必须仍为 0——这测的是**配额还回去了没有**，比数线程数更贴近问题本身
+- **客户端断开**：三种协议都验证断开后服务端立即释放配额
 - **优雅关闭**：验证收到信号后在途的流被排空，超时才强制关闭
-- **竞态**：整仓 `-race` 干净
+- **路由漂移**：`RoutingTests` 会拿 `ApiSurface.KnownRoutes` 与真实注册的端点对照，**加了路由却忘了改表（或反过来）会直接失败**
+- **格式**：`dotnet format --verify-no-changes` 是干净的，所以它进了 CI，而不是一个永远红灯、被大家无视的关卡
 - **伪造的代理头**：`/api/client` 会退回套接字对端并如实报告 `ip_source`，不会被请求头骗过去
 - **逐帧日志的环形缓冲**：手工压过 60000 帧，确认保留的正好是最新 50000 帧、序号连续、重连后间隔基线归零
 
@@ -744,13 +754,13 @@ git push origin v1.0.0
 
 三个任务：
 
-1. **Verify** — `gofmt` 检查、`go vet`、`go test -race`、前端类型检查。任何一项失败都会挡住后面的发布。
-2. **Publish release** — 从**打标签时的源码**重新构建前端（不信任仓库里已提交的产物），交叉编译五个平台，生成 `checksums.txt`，然后创建 GitHub Release（自动生成更新说明）：
-   - `nsst_1.0.0_linux_amd64` / `_linux_arm64`
-   - `nsst_1.0.0_darwin_amd64` / `_darwin_arm64`
-   - `nsst_1.0.0_windows_amd64.exe`
-   - 每个二进制都通过 `-ldflags -X` 把版本号编进去，`/api/health` 会如实返回
-3. **Publish container image** — 构建 `linux/amd64` + `linux/arm64` 双架构镜像并推送，标签为 `1.0.0`、`1.0`、`latest` 和原始标签名 `v1.0.0`。预发布标签（如 `v1.2.0-rc1`）**不会**移动 `latest`。
+1. **Verify** — `dotnet format --verify-no-changes`、`dotnet build`（警告即错误）、`dotnet test`（134 个用例）、前端类型检查。任何一项失败都会挡住后面的发布。
+2. **Publish container image** — 构建 `linux/amd64` + `linux/arm64` 双架构镜像并推送，标签为 `1.0.0`、`1.0`、`latest` 和原始标签名 `v1.0.0`。预发布标签（如 `v1.2.0-rc1`）**不会**移动 `latest`。版本号通过 `--build-arg VERSION=` 传进去，由 MSBuild 写进程序集，`/api/health` 会如实返回。
+3. **Create the GitHub release** — 用 `--generate-notes` 生成发布说明。**不带任何附件**，见下。
+
+> **发布模型变了，这件事要说清楚。** 原来的 Go 实现一次产出五个平台的自包含静态二进制（`linux/darwin/windows` × `amd64/arm64`），`curl | tar` 就能跑。换到框架依赖发布的 ASP.NET Core 之后，**这个形态没有了**：框架依赖发布出来的是 IL，要变成"一个能直接跑的文件"就得按 RID 各自做自包含发布（每个几十 MB，而且要多台原生 runner），或者走 NativeAOT（同样需要各平台原生 runner）。
+>
+> 目前选的是**只发容器镜像**——这也是 `docker-compose.yml` 采用的部署方式；GitHub release 只留说明文字，不再挂二进制。代价是失去了"下载一个二进制直接跑"的分发形式。这个决定是可逆的：如果确实需要单文件分发，per-RID 自包含发布是现成的退路。
 
 ### 镜像推到哪里
 
@@ -776,15 +786,15 @@ git push origin v1.0.0
 
 ### 常见情况
 
-- **流水线失败后重跑**：release 任务是幂等的，重跑会用 `--clobber` 覆盖已存在的附件，不会因为 release 已存在而失败。
+- **流水线失败后重跑**：幂等的。release 已存在时会直接跳过创建，镜像标签重推会被覆盖，都不会因为"已经有了"而失败。
 - **想改 tag 重发**：先删掉 release 和 tag（`gh release delete v1.0.0 --yes --cleanup-tag`），再重新打。注意已经推到镜像仓库的同名标签不会被这个流程删除。
 
 ---
 
 ## 设计取舍
 
-**为什么不用 `SetReadDeadline`/`WriteTimeout` 在 `http.Server` 上？**
-因为那会杀掉所有长连接。写超时只能逐帧设置（`ResponseController.SetWriteDeadline`），`http.Server` 上只保留 `ReadHeaderTimeout` 和 `IdleTimeout`。
+**为什么不在 Kestrel 上设一个全局写超时？**
+因为那会杀掉所有长连接。Kestrel 默认不对请求的响应写入施加超时（它有 `RequestHeadersTimeout`、`KeepAliveTimeout` 这类限制，但都不是针对缓慢读取方的），所以长流能一直挂着。真正需要的「这一帧写不出去就放弃」是逐帧设的：`FrameWriteTimeout` 给每一帧单独开一个 `CancellationTokenSource`，写超时只影响当前帧，而且能和「对端断开」区分开。
 
 **为什么 pacer 迟到后重新对齐而不是补发？**
 补发会造成一次人为突发，让吞吐和间隔的测量结果失真。真实系统里迟到就是迟到，如实记录比「努力追上」更有诊断价值。
@@ -793,7 +803,7 @@ git push origin v1.0.0
 否则一个正常跑完的流会被当成掉线，无限重连下去，结果永远不收敛。重连必须是一个显式选择（界面上有开关，默认关闭）。
 
 **为什么 WebSocket 的配额申请放在升级之前？**
-如果在 `ws.Accept` 之后才申请，超限时连接已经升级完成，只能发一个关闭帧，客户端拿不到 HTTP 状态码，也就拿不到结构化的错误原因。放在前面，三种协议的过载表现完全一致。
+如果在 `AcceptWebSocketAsync()` 之后才申请，超限时连接已经升级完成，只能发一个关闭帧，客户端拿不到 HTTP 状态码，也就拿不到结构化的错误原因。放在前面，三种协议的过载表现完全一致。
 
 **为什么重连不计入流间隙？**
 「连接不存在」和「连接存在但数据没来」是两种不同的故障。混在一起统计，得到的数字无法解释。
@@ -815,7 +825,7 @@ git push origin v1.0.0
 参数存在内存里，不落盘。每次启动都用配置的默认值。
 
 **改了前端代码但页面没变**
-`go build` 不会重新打包前端。需要 `cd web && npm run build`，或者用 `npm run dev` 走 Vite 开发服务器。
+`dotnet publish` 不会重新构建前端。需要 `cd web && npm run build`，或者用 `npm run dev` 走 Vite 开发服务器。顺序也不能反：前端产物是在发布时被内嵌进程序集的，先发布再构建前端只会得到一个没有界面的旧产物。
 
 **怎么确认服务端真的在推送而不是在缓冲**
 看 `curl -N` 的输出是否逐帧出现。如果是等一会儿一次性全部打印出来，说明中间有缓冲。

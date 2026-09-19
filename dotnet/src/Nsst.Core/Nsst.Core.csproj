@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Nsst.Core</RootNamespace>
+    <AssemblyName>Nsst.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The text every stream carries, embedded so the executable is self-contained.
+      PAYLOAD_FILE overrides it at run time.
+
+      The file is UTF-8 with no byte order mark and its bytes are load bearing: frames are
+      slices of this exact text, and the golden fixtures pin the resulting frames. Editing it
+      changes what every stream sends.
+    -->
+    <EmbeddedResource Include="Protocol\payload.txt"
+                      LogicalName="Nsst.Core.Protocol.payload.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Nsst.Core.Tests" />
+  </ItemGroup>
+
+</Project>

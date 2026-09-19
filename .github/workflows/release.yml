@@ -2,9 +2,9 @@ name: Release
 
 # Pushing a tag such as v1.2.3 does three things:
 #
-#   1. verifies the tree (gofmt, go vet, go test -race, frontend type-check)
-#   2. publishes a GitHub release with cross-compiled binaries and checksums
-#   3. builds and pushes the container image, tagged 1.2.3 / 1.2 / latest
+#   1. verifies the tree (format, build with warnings-as-errors, tests, frontend)
+#   2. builds and pushes the container image, tagged 1.2.3 / 1.2 / latest
+#   3. creates the GitHub release with auto-generated notes
 #
 # Image targets:
 #   ghcr.io/<owner>/nsst   always, using the built-in GITHUB_TOKEN (no setup)
@@ -16,6 +16,12 @@ name: Release
 #
 # Without those two secrets the release still succeeds; only the Docker Hub push
 # is skipped, and GHCR receives the image instead.
+#
+# There is deliberately no downloadable-binary job any more. The Go build could
+# emit self-contained static binaries for five platform pairs; a
+# framework-dependent ASP.NET Core publish cannot, and per-RID self-contained or
+# NativeAOT publishing would need native runners per platform. The container
+# image is the supported artifact. See README "发布流程".
 
 on:
   push:
@@ -29,7 +35,7 @@ permissions:
   packages: write # push to GHCR
 
 env:
-  GO_MODULE: github.com/nsst/streamtest
+  DOTNET_VERSION: "10.0.x"
   NODE_VERSION: "22"
 
 jobs:
@@ -52,114 +58,40 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build
 
-      - uses: actions/setup-go@v5
+      # Same reasoning as CI: the server embeds the console at compile time, so
+      # the artifact is handed forward rather than assumed to be present.
+      - uses: actions/upload-artifact@v4
         with:
-          go-version-file: go.mod
-          cache: true
+          name: web-dist
+          path: web/dist
+          retention-days: 1
 
-      - name: Check gofmt
-        run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "::error::these files are not gofmt-clean:"
-            echo "$unformatted"
-            exit 1
-          fi
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: Go tests (race detector)
-        run: go test -race -count=1 ./...
-
-  # ------------------------------------------------------------- github release
-  release:
-    name: Publish release
-    runs-on: ubuntu-latest
-    needs: verify
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
         with:
-          # --generate-notes needs the history back to the previous tag.
-          fetch-depth: 0
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/cache@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/**/*.csproj', 'dotnet/Directory.Build.props') }}
+          restore-keys: nuget-${{ runner.os }}-
 
-      - uses: actions/setup-go@v5
+      - uses: actions/download-artifact@v4
         with:
-          go-version-file: go.mod
-          cache: true
+          name: web-dist
+          path: web/dist
 
-      - name: Resolve the version
-        id: version
-        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Restore
+        run: dotnet restore dotnet/Nsst.slnx
 
-      # The released binaries embed the console, so it has to be built from the
-      # tagged sources rather than trusting whatever is committed in dist/.
-      - name: Build the console
-        working-directory: web
-        run: |
-          npm ci --no-audit --no-fund
-          npm run build
+      - name: Check formatting
+        run: dotnet format dotnet/Nsst.slnx --verify-no-changes --no-restore
 
-      - name: Cross-compile the server
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
-            goos="${target%%/*}"
-            goarch="${target##*/}"
-            ext=""
-            if [ "$goos" = "windows" ]; then ext=".exe"; fi
-            out="dist/nsst_${VERSION}_${goos}_${goarch}${ext}"
-            echo "building ${out}"
-            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
-              -trimpath \
-              -ldflags "-s -w -X ${GO_MODULE}/internal/config.Version=${VERSION}" \
-              -o "$out" \
-              ./cmd/server
-          done
-          cd dist
-          sha256sum ./* > checksums.txt
-          cat checksums.txt
+      - name: Build
+        run: dotnet build dotnet/Nsst.slnx -c Release --no-restore --nologo
 
-      - name: Publish the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            # Re-running a failed workflow should not fail on the existing release.
-            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
-          else
-            gh release create "${GITHUB_REF_NAME}" \
-              --title "${GITHUB_REF_NAME}" \
-              --generate-notes \
-              --verify-tag \
-              dist/*
-          fi
-
-      - name: Summary
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
-        run: |
-          {
-            echo "### Released ${GITHUB_REF_NAME}"
-            echo
-            echo "Binaries built for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64 and windows/amd64,"
-            echo "each stamped with version \`${VERSION}\`."
-            echo
-            echo '```'
-            cat dist/checksums.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Test
+        run: dotnet test dotnet/Nsst.slnx -c Release --no-build --nologo
 
   # ------------------------------------------------------------------ container
   container:
@@ -196,6 +128,9 @@ jobs:
           echo "publishing to:"
           printf '%s\n' "$list"
 
+      # Still needed: the compiler and frontend stages are pinned to
+      # $BUILDPLATFORM, but the final Alpine stage runs its own RUN steps
+      # (creating uid 10001) in the target architecture.
       - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
@@ -255,4 +190,40 @@ jobs:
             echo "${IMAGES}"
             echo '```'
             echo "Platforms: linux/amd64, linux/arm64"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------------------------------------- notes
+  notes:
+    name: Create the GitHub release
+    runs-on: ubuntu-latest
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # --generate-notes needs the history back to the previous tag.
+          fetch-depth: 0
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            # Re-running a failed workflow should not fail on the existing release.
+            echo "release ${GITHUB_REF_NAME} already exists; leaving it in place"
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes \
+              --verify-tag
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "### Released ${GITHUB_REF_NAME}"
+            echo
+            echo "This release carries no binary assets: the supported artifact is"
+            echo "the container image, which is published by the container job."
           } >> "$GITHUB_STEP_SUMMARY"

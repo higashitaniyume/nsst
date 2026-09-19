@@ -17,14 +17,14 @@ services:
     # the name below, so `up --build` and `up` agree on what "hyumerin/nsst:0.2.1"
     # means locally. Without --build the published image is pulled when it is not
     # already present, which keeps a plain deploy from recompiling the project.
-    image: hyumerin/nsst:0.2.1
+    image: hyumerin/nsst:0.2.2
 
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        # Stamped into the binary; /api/health reports it back.
-        VERSION: "0.2.1"
+        # Stamped into the assembly and reported by /api/health and /api/info.
+        VERSION: "0.2.2"
 
     pull_policy: missing
 
@@ -72,7 +72,11 @@ services:
       # for your own text. Note that Docker creates an empty *directory* here if
       # the source file does not exist, which the server rejects with a message
       # saying exactly that.
-      - ./pkg/protocol/payload.txt:/data/payload.txt:ro
+      #
+      # The source is the one copy of this text in the repository: the same file
+      # is embedded into Nsst.Core at build time, so the mounted text and the
+      # built-in text cannot drift apart.
+      - ./dotnet/src/Nsst.Core/Protocol/payload.txt:/data/payload.txt:ro
 
     restart: unless-stopped
 
